@@ -1,0 +1,35 @@
+# ---- secrets: never commit ----
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+key_and_secret.txt
+
+# ---- python ----
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# ---- local data ----
+*.db
+*.db-journal
+*.sqlite3
+
+# ---- O*NET source CSVs are fetched, not vendored (backend/data/onet/fetch.py) ----
+backend/data/onet/*.csv
+
+# ---- os / editor ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# ---- build ----
+node_modules/
+dist/

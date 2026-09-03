@@ -1,0 +1,156 @@
+/* ============================================================================
+   HireIQ — Design tokens
+   One system, two tonal registers. See design-system/MASTER.md.
+
+   HUE BUDGET (the core discipline of this system):
+   Neutrals carry the entire UI. Hue is reserved for meaning only —
+   persona identity and semantic state. There is no decorative colour.
+   Primary actions are therefore high-contrast NEUTRAL, not a brand blue.
+   ============================================================================ */
+
+:root {
+  /* ---- type ---- */
+  --font-display: 'Instrument Serif', 'Iowan Old Style', Georgia, serif;
+  --font-ui: 'Archivo', 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  --fs-11: 0.6875rem;  --fs-12: 0.75rem;   --fs-13: 0.8125rem;
+  --fs-14: 0.875rem;   --fs-16: 1rem;      --fs-19: 1.1875rem;
+  --fs-23: 1.4375rem;  --fs-28: 1.75rem;   --fs-34: 2.125rem;
+  --fs-41: 2.5625rem;  --fs-56: 3.5rem;
+
+  --lh-tight: 1.05;  --lh-snug: 1.3;  --lh-dense: 1.45;  --lh-body: 1.6;
+
+  /* ---- 4px rhythm ---- */
+  --s1: 4px;   --s2: 8px;   --s3: 12px;  --s4: 16px;  --s5: 20px;
+  --s6: 24px;  --s8: 32px;  --s10: 40px; --s14: 56px; --s18: 72px; --s24: 96px;
+
+  /* ---- shape: small radii, enterprise instrument ---- */
+  --r-sm: 4px;  --r-md: 6px;  --r-lg: 10px;  --r-full: 999px;
+
+  /* ---- motion: one rhythm globally ---- */
+  --dur-fast: 140ms;  --dur: 200ms;  --dur-slow: 320ms;
+  --ease-out: cubic-bezier(.16, 1, .3, 1);
+  --ease-in: cubic-bezier(.4, 0, 1, 1);
+
+  /* ---- z ladder ---- */
+  --z-base: 0; --z-sticky: 10; --z-dropdown: 20; --z-drawer: 40;
+  --z-modal: 100; --z-toast: 1000;
+
+  --maxw: 1440px;
+  --sidebar-w: 236px;
+}
+
+/* ============================================================== THEME SYSTEM
+   ONE palette, chosen by the PERSON — not by which portal they happen to be in.
+
+   The earlier design forced dark on the employer and light on the candidate, on the
+   theory that a recruiter is "monitoring" and a candidate should not "feel surveilled".
+   That was a designer's idea, not a user's need:
+
+     - no enterprise hiring product does it (Greenhouse, Lever, Ashby, Workday are all
+       single-theme), so it reads as inconsistency rather than intent;
+     - light vs dark does not change whether someone feels watched — disclosure, copy
+       and control do, and those are handled elsewhere;
+     - it doubled the QA surface, and the contrast bug that actually shipped
+       (--text-3 at 4.08:1) was in the light register specifically;
+     - worst of all, it left a recruiter in a bright office at 2pm with no way out.
+
+   What IS role-driven is DENSITY, and that is kept — see `.dense` below. A monitoring
+   console wants more on screen than an application form does. That is a real
+   difference; the colour temperature was not.
+
+   "System" is resolved to an explicit data-theme by app.js rather than duplicated in a
+   media query, so each palette is declared exactly once. */
+
+:root {
+  --bg: #FBFAF7;
+  --surface: #FFFFFF;
+  --surface-2: #F5F3ED;
+  --surface-3: #EDEAE1;
+  --line: #E4E0D6;
+  --line-strong: #CBC5B6;
+
+  --text: #16181B;
+  --text-2: #52565C;
+  --text-3: #63676E;   /* 5.4:1 on --bg; #767B83 measured 4.08 and failed the floor */
+
+  --accent: #16181B;
+  --accent-ink: #FBFAF7;
+  --accent-hover: #000000;
+  --focus: #2F5FC4;
+
+  --danger: #C23A18;  --danger-soft: #FCEDE9;
+  --success: #10744C; --success-soft: #E8F5EE;
+  --warn: #8A5A08;    --warn-soft: #FBF1DE;
+  --info: #2F5FC4;    --info-soft: #EAF0FC;
+
+  --p-tech: #2F5FC4;
+  --p-product: #8A5A08;
+  --p-hm: #A83458;
+  --p-customer: #0F6C56;
+  --p-behav: #5E3BA0;
+
+  --scrim: rgba(22, 24, 27, 0.5);
+  --shadow-2: 0 4px 14px -4px rgba(22, 24, 27, .14), 0 0 0 1px var(--line);
+  --shadow-3: 0 24px 48px -12px rgba(22, 24, 27, .22), 0 0 0 1px var(--line);
+  --tally-glow: 0 0 0 1px currentColor, 0 0 14px -4px currentColor;
+  color-scheme: light;
+}
+
+/* `.force-dark` is for the interview ROOM, and the reason is the video, not the role:
+   a bright page behind a webcam tile lights the candidate's face and washes the feed.
+   It applies to whoever is in the room. */
+:root[data-theme='dark'],
+.force-dark {
+  --bg: #0A0C0F;
+  --surface: #10141A;
+  --surface-2: #161B23;
+  --surface-3: #1D242E;
+  --line: #212934;
+  --line-strong: #313C4B;
+
+  --text: #E9EDF2;
+  --text-2: #A5B1BF;
+  --text-3: #7A8797;
+
+  --accent: #E9EDF2;          /* primary action = high-contrast neutral */
+  --accent-ink: #0A0C0F;
+  --accent-hover: #FFFFFF;
+  --focus: #6E9BF2;
+
+  --danger: #FF6B47;  --danger-soft: #2A1310;
+  --success: #4FBF87; --success-soft: #0E241A;
+  --warn: #E0A343;    --warn-soft: #241A0C;
+  --info: #6E9BF2;    --info-soft: #101B2C;
+
+  --p-tech: #6E9BF2;
+  --p-product: #E0A343;
+  --p-hm: #EC7396;
+  --p-customer: #43C2A3;
+  --p-behav: #B491E8;
+
+  --scrim: rgba(4, 6, 9, 0.72);
+  --shadow-2: 0 4px 16px -4px rgba(0, 0, 0, .7), 0 0 0 1px var(--line);
+  --shadow-3: 0 24px 56px -12px rgba(0, 0, 0, .85), 0 0 0 1px var(--line-strong);
+  --tally-glow: 0 0 0 1px currentColor, 0 0 18px -2px currentColor;
+  color-scheme: dark;
+}
+
+/* ---- density is the difference that IS role-driven ----
+   A monitoring console legitimately wants more on screen than an application form. */
+.dense {
+  --row-y: var(--s3);
+  --card-pad: var(--s5);
+  --stack: var(--s5);
+}
+:root {
+  --row-y: var(--s4);
+  --card-pad: var(--s6);
+  --stack: var(--s8);
+}
+
+/* Legacy aliases. The register classes are still applied by older call sites; both now
+   resolve to the user's theme rather than overriding it. */
+.reg-control { }
+.reg-calm { }

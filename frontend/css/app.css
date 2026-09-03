@@ -1,0 +1,800 @@
+/* ============================================================================
+   HireIQ — application shells and views
+   ============================================================================ */
+
+/* =================================================================== BRANDMARK
+   The mark is five bars — one per panel persona. The active one is taller.
+   It is the product's whole idea in 20px. */
+.mark { display: flex; align-items: flex-end; gap: 3px; height: 20px; }
+.mark i {
+  display: block; width: 3px; border-radius: 1px;
+  background: var(--text-3);
+  transition: height var(--dur) var(--ease-out), background var(--dur) var(--ease-out);
+}
+.mark i:nth-child(1) { height: 9px;  }
+.mark i:nth-child(2) { height: 14px; }
+.mark i:nth-child(3) { height: 20px; background: var(--text); }
+.mark i:nth-child(4) { height: 12px; }
+.mark i:nth-child(5) { height: 7px;  }
+
+.brand {
+  /* Padding lifts the hit area to the 44px floor without changing visual rhythm. */
+  display: inline-flex; align-items: center; gap: var(--s3);
+  padding: var(--s3) 0; margin: calc(var(--s3) * -1) 0;
+  font-size: var(--fs-16); font-weight: 700; letter-spacing: -0.015em;
+  color: var(--text); text-decoration: none;
+}
+
+/* AI disclosure badge — persistent, never dismissible. PS11 requirement #11. */
+.ai-badge {
+  display: inline-flex; align-items: center; gap: var(--s2);
+  height: 26px; padding: 0 var(--s3);
+  font-size: var(--fs-11); font-weight: 600;
+  letter-spacing: .05em; text-transform: uppercase;
+  color: var(--warn);
+  background: var(--warn-soft);
+  border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent);
+  border-radius: var(--r-full);
+}
+
+/* ================================================================ AUTH SCREEN */
+.auth {
+  display: grid; grid-template-columns: 1.05fr .95fr;
+  min-height: 100dvh;
+}
+.auth-aside {
+  position: relative;
+  display: flex; flex-direction: column; justify-content: space-between;
+  padding: var(--s10) var(--s14);
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+  overflow: hidden;
+}
+/* Hairline field — the control-room grid, not a decorative gradient */
+.auth-aside::after {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background-image:
+    linear-gradient(to right, var(--line) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--line) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: radial-gradient(ellipse 80% 60% at 70% 30%, #000 10%, transparent 75%);
+  opacity: .55;
+}
+.auth-aside > * { position: relative; z-index: 1; }
+.auth-claim {
+  font-family: var(--font-display); font-weight: 400;
+  font-size: clamp(var(--fs-34), 4vw, var(--fs-56));
+  line-height: var(--lh-tight); letter-spacing: -0.025em;
+  max-width: 16ch;
+}
+.auth-claim em { font-style: italic; color: var(--text-2); }
+.auth-points { display: flex; flex-direction: column; gap: var(--s4); max-width: 46ch; }
+.auth-point { display: flex; gap: var(--s3); font-size: var(--fs-13); color: var(--text-2); }
+.auth-point svg { flex: none; color: var(--text-3); margin-top: 1px; }
+
+.auth-main {
+  display: grid; place-items: center;
+  padding: var(--s10) var(--s6);
+  background: var(--bg);
+}
+.auth-form { width: min(400px, 100%); }
+.auth-form h1 { font-size: var(--fs-28); letter-spacing: -0.02em; margin-bottom: var(--s2); }
+.auth-switch { font-size: var(--fs-13); color: var(--text-2); }
+.auth-switch a { color: var(--text); font-weight: 600; }
+
+@media (max-width: 900px) {
+  .auth { grid-template-columns: 1fr; }
+  .auth-aside { display: none; }
+}
+
+/* ============================================================ EMPLOYER CONSOLE */
+.console { display: grid; grid-template-columns: var(--sidebar-w) 1fr; min-height: 100dvh; }
+
+.sidebar {
+  position: sticky; top: 0; align-self: start;
+  display: flex; flex-direction: column;
+  height: 100dvh; padding: var(--s5) var(--s4);
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+}
+.sidebar-head { padding: 0 var(--s2) var(--s6); }
+.nav { display: flex; flex-direction: column; gap: 2px; }
+.nav-item {
+  display: flex; align-items: center; gap: var(--s3);
+  min-height: 38px; padding: 0 var(--s3);
+  font-size: var(--fs-13); font-weight: 500;
+  color: var(--text-2); text-decoration: none;
+  border-radius: var(--r-md);
+  transition: color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+.nav-item svg { flex: none; color: var(--text-3); transition: color var(--dur-fast) var(--ease-out); }
+.nav-item:hover { color: var(--text); background: var(--surface-2); }
+.nav-item:hover svg { color: var(--text-2); }
+/* Active location carries weight + a rail, not colour alone */
+.nav-item[aria-current='page'] {
+  color: var(--text); background: var(--surface-3); font-weight: 600;
+}
+.nav-item[aria-current='page'] svg { color: var(--text); }
+.nav-sep {
+  margin: var(--s5) var(--s3) var(--s2);
+  font-size: var(--fs-11); font-weight: 600;
+  letter-spacing: .08em; text-transform: uppercase; color: var(--text-3);
+}
+.sidebar-foot { margin-top: auto; padding-top: var(--s4); border-top: 1px solid var(--line); }
+
+.avatar {
+  display: grid; place-items: center; flex: none;
+  width: 30px; height: 30px;
+  font-size: var(--fs-12); font-weight: 700;
+  font-family: var(--font-mono);
+  color: var(--text);
+  background: var(--surface-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+}
+
+.main { min-width: 0; display: flex; flex-direction: column; }
+
+.topbar {
+  position: sticky; top: 0; z-index: var(--z-sticky);
+  display: flex; align-items: center; justify-content: space-between; gap: var(--s4);
+  min-height: 60px; padding: var(--s3) var(--s8);
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--line);
+}
+.crumbs { display: flex; align-items: center; gap: var(--s2); font-size: var(--fs-13); min-width: 0; }
+.crumbs a { color: var(--text-3); text-decoration: none; }
+.crumbs a:hover { color: var(--text-2); }
+.crumbs .sep { color: var(--line-strong); }
+.crumbs strong { font-weight: 600; }
+
+.page { padding: var(--s8); max-width: var(--maxw); width: 100%; }
+.page-head { margin-bottom: var(--s8); }
+.page-title { font-size: var(--fs-34); letter-spacing: -0.02em; }
+.page-sub { margin-top: var(--s2); color: var(--text-2); font-size: var(--fs-14); max-width: 68ch; }
+
+/* Console sidebar collapses to a drawer below 1024px */
+.mobile-bar { display: none; }
+@media (max-width: 1023px) {
+  .console { grid-template-columns: 1fr; }
+  .sidebar {
+    position: fixed; inset: 0 auto 0 0; z-index: var(--z-drawer);
+    width: 280px;
+    transform: translateX(-100%);
+    transition: transform var(--dur) var(--ease-out);
+    box-shadow: var(--shadow-3);
+  }
+  .console.drawer-open .sidebar { transform: none; }
+  .mobile-bar {
+    display: flex; align-items: center; gap: var(--s3);
+    padding: var(--s3) var(--s5);
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+  }
+  .page, .topbar { padding-left: var(--s5); padding-right: var(--s5); }
+}
+
+/* =========================================================== CANDIDATE PORTAL */
+.portal { display: flex; flex-direction: column; min-height: 100dvh; }
+.portal-bar {
+  position: sticky; top: 0; z-index: var(--z-sticky);
+  display: flex; align-items: center; justify-content: space-between; gap: var(--s5);
+  padding: var(--s4) var(--s8);
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--line);
+}
+.portal-nav { display: flex; align-items: center; gap: var(--s1); }
+.portal-nav a {
+  padding: var(--s2) var(--s3);
+  font-size: var(--fs-13); font-weight: 500;
+  color: var(--text-2); text-decoration: none;
+  border-radius: var(--r-md);
+  transition: color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+.portal-nav a:hover { color: var(--text); background: var(--surface-2); }
+.portal-nav a[aria-current='page'] { color: var(--text); font-weight: 600; background: var(--surface-2); }
+
+.portal-main { width: min(1120px, 100%); margin: 0 auto; padding: var(--s10) var(--s6) var(--s18); }
+@media (max-width: 700px) {
+  .portal-bar { padding: var(--s3) var(--s5); }
+  .portal-nav a { padding: var(--s2); font-size: var(--fs-12); }
+  .portal-main { padding: var(--s6) var(--s5) var(--s14); }
+}
+
+/* ================================================================= JOB CARDS */
+.job-grid { display: grid; gap: var(--s4); grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); }
+.job-card { padding: var(--s5); }
+.job-card h2 { font-size: var(--fs-19); letter-spacing: -0.01em; }
+.job-meta { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s4); font-size: var(--fs-12); color: var(--text-3); }
+.job-meta span { display: inline-flex; align-items: center; gap: var(--s1); }
+.skills { display: flex; flex-wrap: wrap; gap: var(--s2); }
+
+/* Roles list, employer side — hairline-ruled rows, not floating cards */
+.role-list { border: 1px solid var(--line); border-radius: var(--r-lg); overflow: hidden; }
+.role-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  align-items: center; gap: var(--s5);
+  padding: var(--s5); text-decoration: none; color: inherit;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.role-row:last-child { border-bottom: 0; }
+.role-row:hover { background: var(--surface-2); }
+.role-row h2 { font-size: var(--fs-16); }
+.stat { text-align: right; }
+.stat b { display: block; font-family: var(--font-mono); font-size: var(--fs-19); font-weight: 500; }
+.stat span { font-size: var(--fs-11); letter-spacing: .05em; text-transform: uppercase; color: var(--text-3); }
+@media (max-width: 760px) {
+  .role-row { grid-template-columns: 1fr auto; row-gap: var(--s3); }
+}
+
+/* ============================================================ PIPELINE EDITOR */
+.pipeline { display: flex; flex-direction: column; gap: var(--s3); }
+.stage {
+  display: grid; grid-template-columns: 34px 1fr; gap: var(--s4);
+  padding: var(--s5);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+}
+.stage-seq {
+  display: grid; place-items: center;
+  width: 34px; height: 34px;
+  font-family: var(--font-mono); font-size: var(--fs-13); font-weight: 600;
+  color: var(--text-2);
+  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+}
+
+/* Persona tokens — hue = identity. Always paired with the persona's name. */
+.persona {
+  display: inline-flex; align-items: center; gap: var(--s2);
+  height: 26px; padding: 0 var(--s3);
+  font-size: var(--fs-12); font-weight: 600;
+  border-radius: var(--r-full);
+  border: 1px solid color-mix(in srgb, currentColor 32%, transparent);
+  background: color-mix(in srgb, currentColor 11%, transparent);
+}
+.persona::before {
+  content: ''; width: 7px; height: 7px; border-radius: 50%;
+  background: currentColor; flex: none;
+}
+.p-tech           { color: var(--p-tech); }
+.p-product        { color: var(--p-product); }
+.p-hiring_manager { color: var(--p-hm); }
+.p-customer       { color: var(--p-customer); }
+.p-behavioural    { color: var(--p-behav); }
+
+/* Difficulty gauge — 5 segments, filled to level. Text label always present. */
+.diff { display: inline-flex; align-items: center; gap: var(--s2); }
+.diff-bars { display: flex; gap: 3px; }
+.diff-bars i {
+  display: block; width: 14px; height: 6px;
+  background: var(--surface-3); border: 1px solid var(--line-strong); border-radius: 1px;
+}
+.diff-bars i.on { background: var(--warn); border-color: var(--warn); }
+
+/* ============================================================ LANDING / SPLIT */
+.split-choice {
+  display: grid; place-items: center; min-height: 100dvh; padding: var(--s6);
+}
+.split-inner { width: min(880px, 100%); }
+.choice-grid { display: grid; gap: var(--s4); grid-template-columns: 1fr 1fr; margin-top: var(--s10); }
+@media (max-width: 720px) { .choice-grid { grid-template-columns: 1fr; } }
+.choice {
+  display: flex; flex-direction: column; gap: var(--s3);
+  padding: var(--s8); text-decoration: none; color: inherit;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg);
+  transition: border-color var(--dur) var(--ease-out), transform var(--dur) var(--ease-out);
+}
+.choice:hover { border-color: var(--line-strong); transform: translateY(-2px); }
+.choice h2 { font-size: var(--fs-23); letter-spacing: -0.015em; }
+.choice p { font-size: var(--fs-13); color: var(--text-2); }
+.choice .go { margin-top: var(--s3); display: inline-flex; align-items: center; gap: var(--s2);
+  font-size: var(--fs-13); font-weight: 600; color: var(--text); }
+
+/* ============================================================== INTERVIEW ROOM
+   The room runs in the control register regardless of portal: a candidate on a
+   live call needs contrast and a dark ground behind their own video tile, not
+   a bright page. Density stays calm — one thing to do at a time. */
+.room { display: flex; flex-direction: column; height: 100dvh; background: var(--bg); }
+
+.room-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--s4);
+  padding: var(--s3) var(--s6);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.room-body {
+  display: grid; grid-template-columns: minmax(0, 1fr) 380px;
+  flex: 1; min-height: 0;
+}
+
+.room-stage {
+  position: relative;
+  display: flex; flex-direction: column; justify-content: center; align-items: center;
+  gap: var(--s8); padding: var(--s8);
+  min-width: 0;
+}
+
+.panel-grid {
+  display: flex; flex-wrap: wrap; justify-content: center; gap: var(--s5);
+}
+
+/* Persona tile. Hue = identity; the tally + label = who holds the floor. */
+.tile {
+  display: flex; flex-direction: column; align-items: center; gap: var(--s3);
+  width: clamp(180px, 20vw, 260px);
+  opacity: .55;
+  transition: opacity var(--dur) var(--ease-out), transform var(--dur) var(--ease-out);
+}
+.tile.speaking { opacity: 1; transform: translateY(-4px); }
+
+.tile-face {
+  position: relative;
+  display: grid; place-items: center;
+  width: 100%; aspect-ratio: 4 / 3;
+  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-lg);
+  transition: border-color var(--dur) var(--ease-out), box-shadow var(--dur) var(--ease-out);
+}
+.tile.speaking .tile-face {
+  border-color: currentColor;
+  box-shadow: var(--tally-glow);
+}
+.tile-initials {
+  font-size: var(--fs-23); font-weight: 600; color: currentColor;
+}
+/* Broadcast tally light: dim when idle, lit and pulsing on the floor. */
+.tally {
+  position: absolute; top: var(--s3); right: var(--s3);
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--line-strong);
+}
+.tile.speaking .tally { background: currentColor; animation: tally 1.4s ease-in-out infinite; }
+@keyframes tally { 50% { opacity: .35; } }
+
+.tile-meta { display: flex; flex-direction: column; align-items: center; gap: 2px; text-align: center; }
+.tile-meta strong { color: var(--text); }
+
+.self-wrap {
+  position: absolute; right: var(--s6); bottom: var(--s6);
+  width: 200px; border-radius: var(--r-lg); overflow: hidden;
+  border: 1px solid var(--line-strong); background: var(--surface-2);
+}
+.self-wrap video { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; transform: scaleX(-1); }
+.self-label {
+  display: block; padding: var(--s2) var(--s3);
+  letter-spacing: .06em; color: var(--text-3);
+  border-top: 1px solid var(--line);
+}
+.self-label.hot { color: var(--success); }
+
+/* ---- transcript rail ---- */
+.room-side {
+  display: flex; flex-direction: column; min-height: 0;
+  border-left: 1px solid var(--line); background: var(--surface);
+}
+.side-head { padding: var(--s4) var(--s5); border-bottom: 1px solid var(--line); }
+.transcript { flex: 1; overflow-y: auto; padding: var(--s5); display: flex; flex-direction: column; gap: var(--s4); }
+.side-foot { padding: var(--s4) var(--s5); border-top: 1px solid var(--line); }
+
+.line { display: flex; flex-direction: column; gap: var(--s1); }
+.line-who { letter-spacing: .08em; color: currentColor; }
+.line p { color: var(--text-2); }
+.line.me { color: var(--text-3); }
+.line.me p { color: var(--text); }
+
+.room-done { display: grid; place-items: center; min-height: 100dvh; padding: var(--s6); }
+
+/* ---- consent gate ---- */
+.consent { display: grid; place-items: center; min-height: 100dvh; padding: var(--s6); }
+.consent-card { width: min(560px, 100%); }
+.consent-list { display: flex; flex-direction: column; gap: var(--s3); }
+.consent-list li { display: flex; gap: var(--s3); font-size: var(--fs-13); color: var(--text-2); }
+.consent-list svg { flex: none; margin-top: 2px; color: var(--text-3); }
+
+@media (max-width: 1023px) {
+  .room-body { grid-template-columns: 1fr; grid-template-rows: minmax(220px, 1fr) minmax(0, 1fr); }
+  .room-side { border-left: 0; border-top: 1px solid var(--line); }
+  .self-wrap { width: 128px; right: var(--s4); bottom: var(--s4); }
+  .tile { width: 128px; }
+}
+
+/* ---- portal identity: which of the two account systems is this? ---- */
+.portal-chip {
+  display: inline-flex; align-items: center; gap: var(--s2);
+  height: 26px; padding: 0 var(--s3); margin-bottom: var(--s4);
+  font-size: var(--fs-11); font-weight: 600;
+  letter-spacing: .06em; text-transform: uppercase;
+  border-radius: var(--r-full);
+  border: 1px solid color-mix(in srgb, currentColor 32%, transparent);
+  background: color-mix(in srgb, currentColor 10%, transparent);
+}
+.portal-chip.is-employer { color: var(--p-tech); }
+.portal-chip.is-candidate { color: var(--p-customer); }
+
+/* ================================================================= JOB SEARCH */
+.board { display: grid; grid-template-columns: 268px minmax(0, 1fr); gap: var(--s8); align-items: start; }
+.board-main { min-width: 0; }
+
+.filters {
+  position: sticky; top: calc(64px + var(--s5));
+  display: flex; flex-direction: column; gap: var(--s6);
+  padding: var(--s5);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  max-height: calc(100dvh - 100px);
+  overflow-y: auto;
+}
+.filter-group { display: flex; flex-direction: column; gap: var(--s3); }
+.filter-group + .filter-group { padding-top: var(--s5); border-top: 1px solid var(--line); }
+.filter-title {
+  font-size: var(--fs-11); font-weight: 600;
+  letter-spacing: .07em; text-transform: uppercase; color: var(--text-3);
+}
+
+/* Checkbox / radio rows: the whole row is the 44px hit area, not just the box. */
+.check {
+  /* The LABEL is the hit target, so it carries the height — the native 16px input
+     inside it is intentionally small. */
+  display: flex; align-items: center; gap: var(--s3);
+  min-height: 36px; padding: var(--s1) 0;
+  cursor: pointer; color: var(--text-2);
+  transition: color var(--dur-fast) var(--ease-out);
+}
+.check:hover { color: var(--text); }
+.check input { width: 16px; height: 16px; flex: none; accent-color: var(--focus); cursor: pointer; }
+.check input:disabled { cursor: not-allowed; }
+.check input:disabled + span { opacity: .45; }
+
+.chip-toggle {
+  font: inherit; font-size: var(--fs-12); cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease-out),
+              color var(--dur-fast) var(--ease-out),
+              background var(--dur-fast) var(--ease-out);
+}
+.chip-toggle:hover { border-color: var(--line-strong); color: var(--text); }
+/* Selected state carries weight + border, not hue alone. */
+.chip-toggle.on {
+  color: var(--accent-ink); background: var(--accent);
+  border-color: var(--accent); font-weight: 600;
+}
+
+/* Match strength: a bar plus the number plus what is missing — never a bare score. */
+.match { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); }
+.match-bar {
+  flex: 1 1 80px; min-width: 60px; height: 4px;
+  background: var(--surface-3); border-radius: var(--r-full); overflow: hidden;
+}
+.match-bar i { display: block; height: 100%; background: var(--p-customer); border-radius: inherit; }
+
+@media (max-width: 1023px) {
+  .board { grid-template-columns: 1fr; }
+  .filters { position: static; max-height: none; }
+}
+
+/* ========================================================= PIPELINE BUILDER */
+/* Segmented AI-vs-human toggle. Selected state is fill + weight, not hue alone. */
+.seg { display: inline-flex; border: 1px solid var(--line-strong); border-radius: var(--r-md); overflow: hidden; }
+.seg-btn {
+  display: inline-flex; align-items: center; gap: var(--s2);
+  min-height: 32px; padding: 0 var(--s3);
+  font: inherit; font-size: var(--fs-12); font-weight: 500;
+  color: var(--text-2); background: transparent;
+  border: 0; cursor: pointer; white-space: nowrap;
+  transition: color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+.seg-btn + .seg-btn { border-left: 1px solid var(--line-strong); }
+.seg-btn:hover { color: var(--text); background: var(--surface-2); }
+.seg-btn.on { color: var(--accent-ink); background: var(--accent); font-weight: 600; }
+
+/* Persona seat toggles. Hue is identity; fill is selection. */
+.persona-toggle {
+  display: inline-flex; align-items: center; gap: var(--s2);
+  min-height: 34px; padding: 0 var(--s3);
+  font: inherit; font-size: var(--fs-12); font-weight: 600;
+  color: currentColor; background: transparent;
+  border: 1px dashed color-mix(in srgb, currentColor 40%, transparent);
+  border-radius: var(--r-full); cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+}
+.persona-toggle::before {
+  content: ''; width: 7px; height: 7px; border-radius: 50%;
+  border: 1px solid currentColor; flex: none;
+}
+.persona-toggle:hover:not(:disabled) { background: color-mix(in srgb, currentColor 10%, transparent); }
+.persona-toggle.on {
+  border-style: solid;
+  background: color-mix(in srgb, currentColor 16%, transparent);
+}
+.persona-toggle.on::before { background: currentColor; }
+.persona-toggle:disabled { opacity: .35; cursor: not-allowed; }
+
+input[type='range'] { accent-color: var(--warn); max-width: 140px; }
+
+/* ============================================================== LIVE MONITOR */
+.monitor {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1.35fr) minmax(0, 1fr) 260px;
+  gap: var(--s5);
+  align-items: start;
+}
+.mon-col {
+  display: flex; flex-direction: column; gap: var(--s4);
+  padding: var(--s5);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  max-height: calc(100dvh - 190px);
+  overflow-y: auto;
+}
+.mon-transcript .transcript { padding: 0; }
+
+/* Roster tile — same tally language as the interview room. */
+.mon-tile {
+  display: flex; align-items: center; gap: var(--s3);
+  padding: var(--s3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  opacity: .6;
+  transition: opacity var(--dur) var(--ease-out), border-color var(--dur) var(--ease-out);
+}
+.mon-tile.speaking { opacity: 1; border-color: currentColor; box-shadow: var(--tally-glow); }
+.mon-tile .tally {
+  position: static; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--line-strong); flex: none;
+}
+.mon-tile.speaking .tally { background: currentColor; animation: tally 1.4s ease-in-out infinite; }
+.mon-tile strong { color: var(--text); }
+
+.mon-fact, .mon-thread {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: var(--s2) var(--s3);
+  background: var(--surface-2);
+  border-left: 2px solid var(--line-strong);
+  border-radius: var(--r-sm);
+}
+.mon-thread { flex-direction: row; align-items: flex-start; gap: var(--s2); }
+
+.mon-scenario {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: var(--s3);
+  color: var(--p-customer);
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  border: 1px solid color-mix(in srgb, currentColor 35%, transparent);
+  border-radius: var(--r-md);
+}
+.mon-scenario strong { color: var(--text); }
+
+.mon-briefing {
+  margin: 0; padding: var(--s3);
+  font-family: var(--font-mono); font-size: var(--fs-11);
+  line-height: 1.55; white-space: pre-wrap; word-break: break-word;
+  color: var(--text-2);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  max-height: 220px; overflow-y: auto;
+}
+
+/* Rule trace. R2 and R7 are the two rules a judge is looking for, so they are the
+   two that carry colour; everything else stays neutral. */
+.trace-row {
+  display: flex; align-items: flex-start; gap: var(--s3);
+  padding: var(--s2) 0;
+  border-bottom: 1px solid var(--line);
+  animation: rise var(--dur) var(--ease-out);
+}
+.trace-rule {
+  flex: none; min-width: 34px; padding: 2px var(--s2);
+  font-family: var(--font-mono); font-size: var(--fs-11); font-weight: 600;
+  text-align: center; color: var(--text-2);
+  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+}
+.trace-rule.rule-R2 { color: var(--p-product); border-color: currentColor; }
+.trace-rule.rule-R7 { color: var(--p-customer); border-color: currentColor; }
+.trace-rule.rule-W0 { color: var(--info); border-color: currentColor; }
+
+.flag-contradiction { color: var(--danger); }
+.flag-vague, .flag-jargon { color: var(--warn); }
+.flag-impact_gap { color: var(--p-product); }
+
+@media (max-width: 1400px) {
+  .monitor { grid-template-columns: 240px minmax(0, 1fr) minmax(0, 1fr); }
+  .monitor > .mon-col:last-child { grid-column: 1 / -1; max-height: 260px; }
+}
+@media (max-width: 1023px) {
+  .monitor { grid-template-columns: 1fr; }
+  .mon-col { max-height: none; }
+}
+
+/* ---- voice failure: say so, and say what to do instead ---- */
+.voice-warning {
+  display: flex; align-items: flex-start; gap: var(--s3);
+  padding: var(--s3) var(--s6);
+  font-size: var(--fs-13); line-height: var(--lh-dense);
+  color: var(--text);
+  background: var(--warn-soft);
+  border-bottom: 1px solid color-mix(in srgb, var(--warn) 40%, transparent);
+}
+.voice-warning svg { flex: none; margin-top: 2px; color: var(--warn); }
+
+/* The tally only pulses when audio is genuinely playing: a moving tile must always
+   mean "you should be hearing this". Holding the floor without sound reads as
+   "Thinking…" instead. */
+.tile.speaking .tally { background: currentColor; animation: none; opacity: .5; }
+.tile.speaking.audible .tally { animation: tally 1.4s ease-in-out infinite; opacity: 1; }
+.mon-tile.speaking .tally { animation: none; }
+.mon-tile.speaking.audible .tally { animation: tally 1.4s ease-in-out infinite; }
+
+/* ================================================== REVIEW / FEEDBACK / PROFILE */
+.review { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: var(--s6); align-items: start; }
+@media (max-width: 1200px) { .review { grid-template-columns: 1fr; } }
+
+.rv-transcript { display: flex; flex-direction: column; gap: var(--s3); max-height: 72vh; overflow-y: auto; }
+.rv-turn {
+  display: flex; flex-direction: column; gap: var(--s2);
+  padding: var(--s3);
+  border-left: 2px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  transition: background var(--dur) var(--ease-out), border-color var(--dur) var(--ease-out);
+}
+.rv-turn.me { border-left-color: var(--text-3); }
+.rv-turn p { color: var(--text); }
+/* A cited turn is the answer to "where did this claim come from?" — it has to be
+   unmistakable when you land on it. */
+.rv-turn.cited { background: var(--warn-soft); border-left-color: var(--warn); }
+
+.rv-dim {
+  display: flex; flex-direction: column; gap: var(--s1);
+  padding: var(--s3) var(--s4);
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md);
+}
+.band-high { color: var(--success); border-color: color-mix(in srgb, var(--success) 40%, transparent); }
+.band-mid  { color: var(--text-2); }
+.band-low  { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); }
+
+.rv-evidence {
+  display: flex; flex-direction: column; gap: var(--s2);
+  padding: var(--s3) var(--s4); text-align: left;
+  font: inherit; color: inherit; cursor: pointer;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+.rv-evidence:hover { border-color: var(--line-strong); background: var(--surface-2); }
+.rv-quote {
+  padding-left: var(--s3); border-left: 2px solid var(--line-strong);
+  color: var(--text); font-style: italic;
+}
+
+.fb-evidence {
+  display: flex; flex-direction: column; gap: var(--s2);
+  padding: var(--s3) 0;
+}
+.fb-evidence + .fb-evidence { border-top: 1px solid var(--line); }
+
+/* ---- candidate stage timeline ---- */
+.app-timeline { display: flex; flex-direction: column; gap: 0; }
+.tl-step {
+  display: flex; gap: var(--s3);
+  padding-bottom: var(--s5);
+  position: relative;
+}
+.tl-step:not(:last-child)::before {
+  content: ''; position: absolute; left: 11px; top: 24px; bottom: 0;
+  width: 1px; background: var(--line);
+}
+.tl-dot {
+  display: grid; place-items: center; flex: none;
+  width: 23px; height: 23px; border-radius: 50%;
+  color: var(--text-3);
+  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  z-index: 1;
+}
+.tl-done .tl-dot { color: var(--success); border-color: currentColor; }
+.tl-active .tl-dot { color: var(--warn); border-color: currentColor; box-shadow: var(--tally-glow); }
+.tl-closed .tl-dot { color: var(--text-3); opacity: .5; }
+.tl-closed { opacity: .55; }
+.tl-step strong { color: var(--text); }
+
+/* ---- profile ---- */
+.chip-x {
+  /* 24px, not 16: a remove control has to be hittable with a thumb. */
+  display: inline-grid; place-items: center;
+  width: 24px; height: 24px; margin: -4px -4px -4px 2px; padding: 0;
+  color: var(--text-3); background: transparent; border: 0;
+  border-radius: var(--r-sm); cursor: pointer;
+}
+.chip-x:hover { color: var(--danger); background: var(--surface-3); }
+
+.exp-row {
+  display: flex; gap: var(--s3); align-items: flex-start;
+  padding: var(--s4);
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-md);
+}
+
+/* ============================================ RESPONSIVE TWO-COLUMN LAYOUTS
+   These were inline `grid-template-columns` with a 260px minimum, which no media
+   query can override — three candidate views overflowed a 390px viewport by ~90px
+   as a result. Owning the layout in CSS is what makes it collapsible. */
+.split-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+  gap: var(--s8);
+  align-items: start;
+}
+.split-main.tight { gap: var(--s6); }
+.aside-sticky { position: sticky; top: calc(64px + var(--s5)); }
+
+@media (max-width: 900px) {
+  .split-main, .split-main.tight { grid-template-columns: 1fr; gap: var(--s6); }
+  /* A sticky sidebar on a phone eats the viewport it is trying to help with. */
+  .aside-sticky { position: static; }
+  .filters { position: static; max-height: none; }
+}
+
+
+/* ---- grid children must be allowed to be narrower than their content ----
+   A grid child without min-width:0 is sized by its content's intrinsic width, so a
+   wide table inflated a `minmax(0,1fr)` track to 518px inside a 350px container.
+   The track honours the 0 minimum; the CHILD is what needed telling. */
+.split-main > * { min-width: 0; }
+
+/* ---- candidate nav: 4 items + avatar + sign-out exceed a 390px bar ----
+   The bar itself was 390px wide while its content measured 479px, and because nothing
+   clipped it the whole document scrolled sideways. Let the nav scroll on its own. */
+@media (max-width: 700px) {
+  .portal-bar { gap: var(--s3); }
+  .portal-nav {
+    flex: 1 1 auto; min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    justify-content: flex-end;
+  }
+  .portal-nav::-webkit-scrollbar { display: none; }
+  .portal-nav a { flex: none; }
+  .brand { flex: none; }
+}
+
+/* ---- answering mode on the consent screen ----
+   Typing is an equal path, so it gets its own block rather than a footnote. */
+.consent-answer-mode {
+  display: flex; flex-direction: column; gap: var(--s3);
+  padding: var(--s4);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+
+/* ---- theme control on pre-auth screens ----
+   Landing and the auth screens have no shell to hang it in, so it gets a fixed corner
+   slot. Same position on all five, which is what makes it findable. */
+.theme-corner {
+  position: fixed;
+  top: var(--s5); right: var(--s5);
+  z-index: var(--z-sticky);
+}
+.theme-corner .icon-btn {
+  background: var(--surface);
+  border-color: var(--line);
+}
+.theme-corner .icon-btn:hover { border-color: var(--line-strong); }
+
+@media (max-width: 700px) {
+  .theme-corner { top: var(--s4); right: var(--s4); }
+}

@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>HireIQ — Adaptive AI Interview Panel</title>
+<meta name="description" content="An adaptive multi-persona AI interview panel. Five interviewers, one shared candidate context, and an assessment where every line cites the transcript.">
+<meta name="color-scheme" content="light dark">
+<script>
+  // Applied before the first paint. Deferring this to the module boot produces a
+  // visible flash of the wrong theme on every load, which no amount of animation
+  // elsewhere makes up for.
+  (function () {
+    try {
+      var stored = localStorage.getItem('hireiq.theme');
+      var mode = ['system', 'light', 'dark'].indexOf(stored) >= 0 ? stored : 'system';
+      var dark = mode === 'dark' || (mode === 'system'
+        && window.matchMedia('(prefers-color-scheme: dark)').matches);
+      document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+      document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+    } catch (e) { document.documentElement.dataset.theme = 'light'; }
+  })();
+</script>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+
+<link rel="stylesheet" href="./css/tokens.css">
+<link rel="stylesheet" href="./css/base.css">
+<link rel="stylesheet" href="./css/app.css">
+</head>
+
+<body>
+  <a class="skip-link" href="#main">Skip to main content</a>
+
+  <div id="root">
+    <!-- First paint before the module boots. Reserved height prevents a layout jump. -->
+    <div class="page" aria-busy="true">
+      <div class="skel" style="height:40px;width:220px;border-radius:var(--r-md)"></div>
+      <div class="skel" style="height:84px;margin-top:var(--s8);border-radius:var(--r-lg)"></div>
+      <div class="skel" style="height:84px;margin-top:var(--s3);border-radius:var(--r-lg)"></div>
+    </div>
+  </div>
+
+  <!-- Toast region: announced politely, never steals focus -->
+  <div id="toasts" aria-live="polite" aria-atomic="false"></div>
+
+  <noscript>
+    <div style="padding:2rem;max-width:60ch;margin:0 auto">
+      <h1>JavaScript is required</h1>
+      <p>HireIQ runs a live, interruptible voice interview in the browser. That needs JavaScript enabled.</p>
+    </div>
+  </noscript>
+
+  <script>
+    // Same origin by default — the API serves this page, so there is no port to mismatch.
+    // To point at a different backend (split static server, remote API), set the
+    // 'hireiq.apiBase' localStorage key to that origin. Never hardcode one here:
+    // a fixed port is how the client ends up talking to the wrong service.
+    window.HIREIQ_API_BASE = localStorage.getItem('hireiq.apiBase') || '';
+  </script>
+  <script type="module" src="./js/app.js"></script>
+</body>
+</html>
