@@ -2,15 +2,15 @@
    HireIQ — Design tokens
    One system, two tonal registers. See design-system/MASTER.md.
 
-   HUE BUDGET (the core discipline of this system):
-   Neutrals carry the entire UI. Hue is reserved for meaning only —
-   persona identity and semantic state. There is no decorative colour.
-   Primary actions are therefore high-contrast NEUTRAL, not a brand blue.
+   BRAND (superseded the earlier "hue budget / neutral-only" rule): one accent —
+   a bright, friendly green — carries every primary action and highlight across
+   the whole product. Persona identity and semantic status colours (below) are
+   unchanged; what changed is that primary buttons are no longer forced neutral.
    ============================================================================ */
 
 :root {
   /* ---- type ---- */
-  --font-display: 'Instrument Serif', 'Iowan Old Style', Georgia, serif;
+  --font-display: 'Baloo 2', 'Fredoka', 'Archivo', system-ui, sans-serif;
   --font-ui: 'Archivo', 'Helvetica Neue', Arial, sans-serif;
   --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
 
@@ -75,10 +75,10 @@
   --text-2: #52565C;
   --text-3: #63676E;   /* 5.4:1 on --bg; #767B83 measured 4.08 and failed the floor */
 
-  --accent: #16181B;
-  --accent-ink: #FBFAF7;
-  --accent-hover: #000000;
-  --focus: #2F5FC4;
+  --accent: #17D97A;
+  --accent-ink: #06170F;
+  --accent-hover: #10BE69;
+  --focus: #17D97A;
 
   --danger: #C23A18;  --danger-soft: #FCEDE9;
   --success: #10744C; --success-soft: #E8F5EE;
@@ -114,10 +114,10 @@
   --text-2: #A5B1BF;
   --text-3: #7A8797;
 
-  --accent: #E9EDF2;          /* primary action = high-contrast neutral */
-  --accent-ink: #0A0C0F;
-  --accent-hover: #FFFFFF;
-  --focus: #6E9BF2;
+  --accent: #22E88C;
+  --accent-ink: #06170F;
+  --accent-hover: #49F2A5;
+  --focus: #22E88C;
 
   --danger: #FF6B47;  --danger-soft: #2A1310;
   --success: #4FBF87; --success-soft: #0E241A;

@@ -423,6 +423,71 @@ export function jobDetail({ id }) {
   return host;
 }
 
+const REC_CLASS = {
+  strong_yes: 'band-high', yes: 'band-high', lean_yes: 'band-mid',
+  lean_no: 'band-mid', no: 'band-low', strong_no: 'band-low',
+};
+const REC_LABEL = {
+  strong_yes: 'Strong yes', yes: 'Yes', lean_yes: 'Lean yes',
+  lean_no: 'Lean no', no: 'No', strong_no: 'Strong no',
+};
+
+/** Scored applicants first (highest score first), unscored ones after by recency —
+ * this ordering alone is most of "how an employer selects the best candidate": the
+ * strongest evidence-backed result is the first row they see. */
+function renderApplicantsTable(applicants) {
+  const ranked = [...applicants].sort((a, b) => {
+    if (a.overall == null && b.overall == null) return new Date(b.applied_at) - new Date(a.applied_at);
+    if (a.overall == null) return 1;
+    if (b.overall == null) return -1;
+    return b.overall - a.overall;
+  });
+  const topId = ranked.find((a) => a.overall !== null && a.overall !== undefined)?.id;
+
+  return h('div', { class: 'table-wrap' }, [
+    h('table', {}, [
+      h('thead', {}, [h('tr', {}, [
+        h('th', { text: 'Candidate' }), h('th', { text: 'Score' }), h('th', { text: 'Status' }),
+        h('th', { text: 'Applied' }), h('th', {}, [h('span', { class: 'sr-only', text: 'Actions' })]),
+      ])]),
+      h('tbody', {}, ranked.map((a) => h('tr', {}, [
+        h('td', {}, [h('div', { class: 'row gap3' }, [
+          h('span', { class: 'avatar', text: initials(a.full_name) }),
+          h('div', { class: 'col' }, [
+            h('div', { class: 'row gap2', style: { alignItems: 'center' } }, [
+              h('strong', { text: a.full_name }),
+              a.id === topId ? h('span', { class: 'chip band-high' }, [
+                h('span', { html: icon('trophy', 11) }), 'Top match',
+              ]) : null,
+            ]),
+            h('span', { class: 'fs12 t3', text: a.headline || a.email }),
+          ]),
+        ])]),
+        h('td', {}, [
+          a.overall !== null && a.overall !== undefined
+            ? h('div', { class: 'col gap1' }, [
+                h('strong', { class: 'mono fs14', text: String(a.overall) }),
+                h('span', { class: `fs11 ${REC_CLASS[a.recommendation] || ''}`,
+                  text: REC_LABEL[a.recommendation] || a.recommendation || '' }),
+              ])
+            : h('span', { class: 'fs12 t3', text: 'Not yet interviewed' }),
+        ]),
+        h('td', {}, [h('span', { class: 'status status-applied', text: 'Applied' })]),
+        h('td', { class: 'fs13 t2', text: relTime(a.applied_at) }),
+        h('td', { style: { textAlign: 'right' } }, [
+          h('div', { class: 'row gap2', style: { justifyContent: 'flex-end' } }, [
+            h('a', { class: 'btn btn-sm', href: `#/employer/review/${a.id}`, text: 'Review' }),
+            h('button', {
+              class: 'btn btn-sm btn-primary', type: 'button', text: 'Start interview',
+              onClick: (e) => startInterview(e.currentTarget, a.id),
+            }),
+          ]),
+        ]),
+      ]))),
+    ]),
+  ]);
+}
+
 function renderJob(job, applicants) {
   const aiStage = job.stages.find((s) => s.kind === 'ai_interview');
   const cfg = aiStage?.interview_config_json || {};
@@ -480,39 +545,15 @@ function renderJob(job, applicants) {
     ]),
 
     h('div', { class: 'split-main tight' }, [
-      /* ---- left: applicants ---- */
+      /* ---- left: applicants, ranked — this is the "who do I hire" view ---- */
       h('section', { class: 'col gap4' }, [
-        h('h2', { style: { fontSize: 'var(--fs-16)' }, text: 'Applicants' }),
-        applicants.length
-          ? h('div', { class: 'table-wrap' }, [
-              h('table', {}, [
-                h('thead', {}, [h('tr', {}, [
-                  h('th', { text: 'Candidate' }), h('th', { text: 'Status' }),
-                  h('th', { text: 'Applied' }), h('th', {}, [h('span', { class: 'sr-only', text: 'Actions' })]),
-                ])]),
-                h('tbody', {}, applicants.map((a) => h('tr', {}, [
-                  h('td', {}, [h('div', { class: 'row gap3' }, [
-                    h('span', { class: 'avatar', text: initials(a.full_name) }),
-                    h('div', { class: 'col' }, [
-                      h('strong', { text: a.full_name }),
-                      h('span', { class: 'fs12 t3', text: a.headline || a.email }),
-                    ]),
-                  ])]),
-                  h('td', {}, [h('span', { class: 'status status-applied', text: 'Applied' })]),
-                  h('td', { class: 'fs13 t2', text: relTime(a.applied_at) }),
-                  h('td', { style: { textAlign: 'right' } }, [
-                    h('div', { class: 'row gap2', style: { justifyContent: 'flex-end' } }, [
-                      h('a', { class: 'btn btn-sm', href: `#/employer/review/${a.id}`,
-                        text: 'Review' }),
-                      h('button', {
-                        class: 'btn btn-sm btn-primary', type: 'button', text: 'Start interview',
-                        onClick: (e) => startInterview(e.currentTarget, a.id),
-                      }),
-                    ]),
-                  ]),
-                ]))),
-              ]),
-            ])
+        h('div', { class: 'row-between wrap gap3' }, [
+          h('h2', { style: { fontSize: 'var(--fs-16)' }, text: 'Applicants' }),
+          applicants.some((a) => a.overall !== null && a.overall !== undefined)
+            ? h('p', { class: 'hint', text: 'Sorted by interview score, highest first. Click Review for the evidence behind any number.' })
+            : null,
+        ]),
+        applicants.length ? renderApplicantsTable(applicants)
           : h('div', { class: 'card' }, [empty({
               iconName: 'users',
               title: job.status === 'open' ? 'No applicants yet' : 'Publish to start receiving applications',

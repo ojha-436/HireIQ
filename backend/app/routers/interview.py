@@ -29,6 +29,7 @@ from app.interview import context as CTX
 from app.interview import personas as P
 from app.interview import session as RT
 from app.interview.broadcast import broadcast as _broadcast_to_employers
+from app.routers.notifications import notify_candidate
 from app.models import (AuditLog, Candidate, InterviewAssessment, InterviewSession,
                         InterviewTurn, JobApplication, JobPosting, PipelineStage,
                         Tenant, TenantUser)
@@ -186,6 +187,10 @@ def start_interview(
 
     app_row.status = "in_progress"
     app_row.last_activity_at = datetime.now(timezone.utc)
+    notify_candidate(db, candidate_id=cand.id, kind="interview_ready", payload={
+        "session_id": sess.id, "application_id": app_row.id,
+        "job_title": job.title, "stage_name": target.name,
+    })
     db.commit()
     db.refresh(sess)
 
@@ -760,6 +765,11 @@ def _decide(db: Session, app_row: JobApplication, employer: TenantUser, *,
         payload_json={"reason": reason.strip(), "released": released,
                       "moved_to": moved_to, "status": app_row.status},
     ))
+    job_title = getattr(db.get(JobPosting, app_row.job_id), "title", "") or ""
+    notify_candidate(db, candidate_id=app_row.candidate_id, kind="application_decision", payload={
+        "application_id": app_row.id, "job_title": job_title,
+        "status": app_row.status, "moved_to": moved_to, "released": bool(released),
+    })
     db.commit()
     return {"ok": True, "status": app_row.status, "moved_to": moved_to,
             "assessments_released": released}
@@ -824,6 +834,10 @@ def release_feedback(
         action="application.release_feedback", subject_type="application",
         subject_id=app_row.id, payload_json={"released": released},
     ))
+    if released:
+        job_title = getattr(db.get(JobPosting, app_row.job_id), "title", "") or ""
+        notify_candidate(db, candidate_id=app_row.candidate_id, kind="feedback_released",
+                         payload={"application_id": app_row.id, "job_title": job_title})
     db.commit()
     return {"ok": True, "assessments_released": released}
 

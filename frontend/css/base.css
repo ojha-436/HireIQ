@@ -29,9 +29,9 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
 /* Display face — used for page titles, big numerals, report headings */
 .display {
   font-family: var(--font-display);
-  font-weight: 400;
+  font-weight: 600;
   line-height: var(--lh-tight);
-  letter-spacing: -0.02em;
+  letter-spacing: -0.01em;
 }
 
 .mono {
@@ -82,7 +82,7 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
   color: var(--btn-fg);
   background: var(--btn-bg);
   border: 1px solid var(--btn-line);
-  border-radius: var(--r-md);
+  border-radius: var(--r-full);
   cursor: pointer;
   white-space: nowrap;
   transition: background var(--dur-fast) var(--ease-out),
@@ -195,7 +195,7 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
   color: var(--text-2);
   background: var(--surface-2);
   border: 1px solid var(--line);
-  border-radius: var(--r-sm);
+  border-radius: var(--r-full);
   white-space: nowrap;
 }
 .chip-mono { font-family: var(--font-mono); font-size: var(--fs-11); }

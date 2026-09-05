@@ -35,6 +35,10 @@ export class InterviewRoom {
     this.mic = null;
     this.agora = null;
     this.camTrack = null;
+    // The raw getUserMedia() stream. Closing the AudioContext/mic worklet or leaving
+    // Agora does NOT stop these tracks — that is what left the camera/mic hardware
+    // (and the browser's in-use indicator) on after the interview ended.
+    this._localStream = null;
 
     this.muted = false;
     this.speaking = null;                 // persona key holding the floor
@@ -67,6 +71,18 @@ export class InterviewRoom {
     if (this.agora) {
       try { this.camTrack?.close(); await this.agora.leave(); } catch { /* not joined */ }
     }
+    this._releaseLocalMedia();
+  }
+
+  /** Stop the actual camera/mic hardware. Safe to call more than once, and safe to
+   * call BEFORE the rest of teardown (see #end-btn and ws.onclose below) — a
+   * candidate who has said they are done, or whose connection just dropped, should
+   * not keep the camera light on while the server round-trips a goodbye. */
+  _releaseLocalMedia() {
+    try { this._localStream?.getTracks().forEach((t) => t.stop()); } catch { /* already stopped */ }
+    this._localStream = null;
+    const self = this.root?.querySelector('#self-video');
+    if (self) self.srcObject = null;
   }
 
   // ------------------------------------------------------------------ media
@@ -89,6 +105,7 @@ export class InterviewRoom {
     } catch {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     }
+    this._localStream = stream;
 
     const videoTrack = stream.getVideoTracks()[0];
     if (videoTrack) {
@@ -148,6 +165,11 @@ export class InterviewRoom {
     };
     this.ws.onerror = () => this._status('Connection problem', true);
     this.ws.onclose = (e) => {
+      // Whatever the reason — the server said goodbye, the connection dropped, the
+      // interview was already over — a dead socket means no one is listening on the
+      // other end, so the camera/mic must not stay live waiting for a message that
+      // is never coming.
+      this._releaseLocalMedia();
       if (this.ended) return;
       const why = {
         4401: 'This interview is not yours to join.',
@@ -303,7 +325,14 @@ export class InterviewRoom {
       q('#mute-btn').setAttribute('aria-pressed', String(this.muted));
     };
     q('#done-btn').onclick = () => this._send({ type: 'activity_end' });
-    q('#end-btn').onclick = () => { this._send({ type: 'end' }); };
+    q('#end-btn').onclick = () => {
+      this._send({ type: 'end' });
+      // Don't wait on the server's goodbye round-trip (it still has to build the
+      // report) to give the candidate their camera and mic back — they said they're
+      // done, so the hardware should let go immediately. The socket, worklet and
+      // Agora client still get torn down properly by destroy() once 'ended' arrives.
+      this._releaseLocalMedia();
+    };
     const sendTyped = () => {
       const el = q('#type-input');
       const text = el.value.trim();

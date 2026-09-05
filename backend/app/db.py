@@ -1,8 +1,10 @@
 """SQLAlchemy engine + session. SQLite in dev, Postgres in prod — same models."""
 from collections.abc import Iterator
+from datetime import datetime, timezone
 
-from sqlalchemy import create_engine
+from sqlalchemy import DateTime, create_engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+from sqlalchemy.types import TypeDecorator
 
 from .config import get_settings
 
@@ -15,6 +17,31 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, futu
 
 class Base(DeclarativeBase):
     pass
+
+
+class UTCDateTime(TypeDecorator):
+    """Every datetime this app writes is produced via `utcnow()` or
+    `datetime.now(timezone.utc)` — but neither SQLite nor a plain (non-tz) Postgres
+    `TIMESTAMP` column preserves that tzinfo across a round trip, so it comes back
+    naive. FastAPI then serializes a naive datetime WITHOUT a UTC suffix ("Z" or
+    "+00:00"), and every browser not itself on UTC parses that string as ITS OWN
+    local time — a candidate in IST would see "Applied 5.5 hours ago" for something
+    that just happened. This type restores the tzinfo this app already knows is
+    always true, at the one place it can be forgotten.
+    """
+
+    impl = DateTime
+    cache_ok = True
+
+    def process_bind_param(self, value: datetime | None, dialect) -> datetime | None:
+        if value is not None and value.tzinfo is not None:
+            value = value.astimezone(timezone.utc).replace(tzinfo=None)
+        return value
+
+    def process_result_value(self, value: datetime | None, dialect) -> datetime | None:
+        if value is not None and value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value
 
 
 def get_db() -> Iterator[Session]:

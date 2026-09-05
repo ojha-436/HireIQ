@@ -62,7 +62,7 @@
 }
 .auth-aside > * { position: relative; z-index: 1; }
 .auth-claim {
-  font-family: var(--font-display); font-weight: 400;
+  font-family: var(--font-display); font-weight: 700;
   font-size: clamp(var(--fs-34), 4vw, var(--fs-56));
   line-height: var(--lh-tight); letter-spacing: -0.025em;
   max-width: 16ch;
@@ -130,7 +130,7 @@
   color: var(--text);
   background: var(--surface-3);
   border: 1px solid var(--line-strong);
-  border-radius: var(--r-md);
+  border-radius: var(--r-full);
 }
 
 .main { min-width: 0; display: flex; flex-direction: column; }
@@ -203,10 +203,10 @@
   .portal-main { padding: var(--s6) var(--s5) var(--s14); }
 }
 
-/* ================================================================= JOB CARDS */
-.job-grid { display: grid; gap: var(--s4); grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); }
-.job-card { padding: var(--s5); }
-.job-card h2 { font-size: var(--fs-19); letter-spacing: -0.01em; }
+/* ================================================================= JOB CARDS
+   One column at typical widths — a job card carries a snippet and several chip
+   rows now, and reads better full-width than squeezed two-up. */
+.job-grid { display: grid; gap: var(--s4); grid-template-columns: repeat(auto-fill, minmax(480px, 1fr)); }
 .job-meta { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s4); font-size: var(--fs-12); color: var(--text-3); }
 .job-meta span { display: inline-flex; align-items: center; gap: var(--s1); }
 .skills { display: flex; flex-wrap: wrap; gap: var(--s2); }
@@ -475,7 +475,107 @@
   flex: 1 1 80px; min-width: 60px; height: 4px;
   background: var(--surface-3); border-radius: var(--r-full); overflow: hidden;
 }
-.match-bar i { display: block; height: 100%; background: var(--p-customer); border-radius: inherit; }
+.match-bar i { display: block; height: 100%; background: var(--accent); border-radius: inherit; }
+
+/* ============================================================== JOB BOARD HERO */
+.live-badge {
+  display: inline-flex; align-items: center; gap: var(--s2);
+  height: 24px; padding: 0 var(--s3);
+  font-size: var(--fs-11); font-weight: 700;
+  letter-spacing: .07em; text-transform: uppercase;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  border-radius: var(--r-full);
+}
+.live-badge .dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--accent); flex: none;
+  animation: live-pulse 1.8s ease-in-out infinite;
+}
+@keyframes live-pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 45%, transparent); }
+  50% { opacity: .75; box-shadow: 0 0 0 4px transparent; }
+}
+
+.board-hero { padding: var(--s10) 0 var(--s8); max-width: 74ch; }
+.board-hero h1 { font-size: clamp(var(--fs-34), 4vw, var(--fs-56)); margin: var(--s4) 0 var(--s2); }
+.board-hero .updated { font-size: var(--fs-12); color: var(--text-3); margin-bottom: var(--s3); }
+.board-hero p.lede { font-size: var(--fs-16); color: var(--text-2); line-height: var(--lh-body); }
+.board-hero p.lede strong { color: var(--text); }
+.board-hero .hero-actions { display: flex; gap: var(--s3); margin-top: var(--s6); flex-wrap: wrap; }
+
+/* --------------------------------------------------------------- job card v2 */
+.job-card-v2 {
+  display: flex; flex-direction: column; gap: var(--s4);
+  padding: var(--s6);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+.job-card-v2:hover { border-color: var(--line-strong); }
+.job-card-v2 .jc-head { display: flex; align-items: flex-start; gap: var(--s4); }
+.jc-logo {
+  display: grid; place-items: center; flex: none;
+  width: 44px; height: 44px;
+  font-size: var(--fs-13); font-weight: 700; font-family: var(--font-mono);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface-2));
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-radius: var(--r-full);
+}
+.jc-head h2 { font-size: var(--fs-19); }
+.jc-head a.jc-title { color: inherit; text-decoration: none; }
+.jc-head a.jc-title:hover { text-decoration: underline; }
+.job-card-v2 .snippet {
+  color: var(--text-2); font-size: var(--fs-13); line-height: var(--lh-body);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.job-card-v2 .jc-actions { display: flex; gap: var(--s3); margin-top: var(--s1); }
+
+/* =============================================================== NOTIFICATIONS */
+.notif-wrap { position: relative; }
+.notif-badge {
+  position: absolute; top: 2px; right: 2px;
+  min-width: 15px; height: 15px; padding: 0 3px;
+  display: grid; place-items: center;
+  font-size: 10px; font-weight: 700; line-height: 1;
+  color: var(--accent-ink); background: var(--accent);
+  border-radius: var(--r-full);
+  box-shadow: 0 0 0 2px var(--surface);
+}
+.notif-panel {
+  /* position: fixed + top/right are set from JS (app.js's position()) — this lives in
+     <body>, not in the nav, so a static offset here would mean nothing. See the
+     comment on the body.append() call for why it can't just be position:absolute
+     inside .portal-bar. */
+  position: fixed; z-index: var(--z-dropdown);
+  width: 340px; max-width: calc(100vw - var(--s6));
+  max-height: 420px; overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-3);
+}
+.notif-head {
+  position: sticky; top: 0;
+  padding: var(--s3) var(--s4);
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+.notif-list { display: flex; flex-direction: column; }
+.notif-item {
+  display: block; padding: var(--s3) var(--s4);
+  text-decoration: none; color: inherit;
+  border-bottom: 1px solid var(--line);
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.notif-item:last-child { border-bottom: 0; }
+.notif-item:hover { background: var(--surface-2); }
+.notif-item.unread { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.notif-item.unread p { font-weight: 600; }
+.notif-item p { margin: 0 0 var(--s1); line-height: var(--lh-dense); }
 
 /* ============================================================= READINESS / METER
    Dashboard dimension bars. Same visual language as .match-bar (a filled track),
