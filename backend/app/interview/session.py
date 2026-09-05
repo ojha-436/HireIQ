@@ -39,16 +39,72 @@ VERBATIM_TURNS = 6
 #: Native audio emits several turn_complete signals inside one spoken sentence; this is
 #: what stops each fragment becoming its own transcript row and its own `your_turn`.
 #: Env-tunable so the test suite does not pay real wall-clock per turn.
-TURN_SETTLE_S = float(os.getenv("INTERVIEW_TURN_SETTLE_S", "0.9"))
+TURN_SETTLE_S = float(os.getenv("INTERVIEW_TURN_SETTLE_S", "2.5"))
 
 #: Hard ceiling on one persona turn. The debounce is cancelled by every new output
 #: chunk, so a model that never stops producing would never let the turn close — which
 #: is exactly what a reasoning-leaking model did. After this the turn settles regardless.
 TURN_MAX_S = float(os.getenv("INTERVIEW_TURN_MAX_S", "12"))
+
+#: How long the candidate's INPUT transcription must be quiet before the answer is
+#: considered complete. Gemini streams input transcription with real latency, and a
+#: good part of it lands AFTER activity_end. Scoring the instant the browser says
+#: "stopped speaking" therefore graded a half-sentence: the tail arrived moments later
+#: and became a second, orphaned candidate turn, while the analyst flagged the
+#: truncated first half `vague` and dropped correctness to 1. Same debounce idea as
+#: TURN_SETTLE_S, applied to the other direction.
+CAND_SETTLE_S = float(os.getenv("INTERVIEW_CAND_SETTLE_S", "2.5"))
+
+#: Ceiling on that wait, so a stuck transcriber cannot stall the turn for ever.
+#: Generous on purpose: the tail is proportional to how long the candidate spoke —
+#: a 12-second answer was still being transcribed 7.8 seconds after end-of-speech — and
+#: a ceiling shorter than the tail truncates exactly the long, detailed answers that
+#: deserve the most credit. The quiet window above is what normally ends the wait; this
+#: only ever fires when transcription genuinely stalls.
+CAND_SETTLE_MAX_S = float(os.getenv("INTERVIEW_CAND_SETTLE_MAX_S", "25"))
+
+#: How long to wait for the FIRST transcribed word before concluding the candidate said
+#: nothing at all. Without it, true silence would wait out CAND_SETTLE_MAX_S before the
+#: panel nudged, which reads as the app having frozen.
+CAND_FIRST_WORD_S = float(os.getenv("INTERVIEW_CAND_FIRST_WORD_S", "3.0"))
+
+#: How many consecutive silent turns still earn a spoken nudge before the panel stops
+#: asking. Prevents a broken microphone turning into an endless loop of prompting.
+MAX_SILENT_NUDGES = 2
+
+#: RMS below which a 16-bit PCM frame counts as room tone rather than speech.
+SPEECH_RMS_FLOOR = int(os.getenv("INTERVIEW_SPEECH_RMS_FLOOR", "500"))
 SUMMARISE_EVERY = 6
 # Budget guard: if assembled context exceeds this, the verbatim window shrinks BEFORE any
 # grounding is dropped (plan-v3.md §8).
 CONTEXT_CHAR_BUDGET = 24000
+
+
+def _carries_speech(pcm16: bytes) -> bool:
+    """True if this frame holds something louder than room tone.
+
+    The browser streams mic frames CONTINUOUSLY, silence included. Opening an activity
+    window for that silence told the model "the candidate is talking", which both made
+    it wait for an end-of-turn that was not coming and let a stray window interrupt the
+    interviewer mid-sentence — the panel would manage three words and stop. Gating on
+    signal energy keeps the safety net for a missed VAD event without ever letting
+    silence take the floor.
+    """
+    if len(pcm16) < 2:
+        return False
+    # cast("h") demands a whole number of 16-bit samples; a half-frame from the browser
+    # would otherwise raise straight through on_audio and take the socket down with it.
+    usable = len(pcm16) - (len(pcm16) % 2)
+    samples = memoryview(pcm16)[:usable].cast("h")
+    total = 0
+    # Every 8th sample: enough to classify a 100 ms frame, a fraction of the work.
+    n = 0
+    for i in range(0, len(samples), 8):
+        v = samples[i]
+        total += v * v
+        n += 1
+    return n > 0 and (total / n) ** 0.5 >= SPEECH_RMS_FLOOR
+
 
 # Emit to the browser. Text payloads are dicts (JSON), audio is raw bytes.
 Emit = Callable[[Dict[str, Any]], Awaitable[None]]
@@ -135,6 +191,19 @@ class InterviewRuntime:
         self.rolling_summary = ""
         self.recent_turns: List[Dict[str, str]] = []   # verbatim window (see _transcript_block)
         self.deciding = False                     # guards re-entrant turn decisions
+        #: Personas whose Live connection currently has an OPEN activity window. Under
+        #: manual activity detection the model discards any audio that arrives outside
+        #: one, so this is what guarantees the candidate is heard even when the browser's
+        #: VAD never fires (a quiet mic, a headset, "I'm done answering" clicked without
+        #: speech_start ever having been detected).
+        self._activity_open: set = set()
+        #: False only across the moment a persona is prompted. The browser streams
+        #: mic frames CONTINUOUSLY from the moment it connects — silence included — so
+        #: without this gate the very first frame opened an activity window before the
+        #: opening question had been prompted, and the model then sat waiting for
+        #: activity_end instead of speaking: an empty transcript and a silent panel.
+        #: An activity window must never be open at the moment a persona is prompted.
+        self._capture_allowed = False
         self.takeover_active = False              # True while employer has paused AI
         self.whisper_queue: List[str] = []       # employer-injected questions
         self.started_at = time.monotonic()
@@ -668,7 +737,15 @@ class InterviewRuntime:
                          "intent": (directive or {}).get("intent", "open")})
         prompt = await asyncio.to_thread(
             self._turn_prompt, persona_key, first_turn, directive)
+        # A persona prompted while an activity window is open never speaks: the model
+        # treats the open window as "the user is still talking" and waits for its end.
+        # The window is shut only across this critical section — the candidate is heard
+        # again the moment the directive is away, so someone who starts answering while
+        # the interviewer is still talking is not silently dropped.
+        self._capture_allowed = False
+        await self._close_activity()
         await conn.send_text(prompt, end_of_turn=True)
+        self._capture_allowed = True
 
     def _turn_prompt(self, persona_key: str, first_turn: bool,
                      directive: Optional[Dict[str, Any]]) -> str:
@@ -835,7 +912,32 @@ class InterviewRuntime:
         if conn is not None and not self.ended:
             if not self._cand_buf and self._cand_turn_started_ms == 0:
                 self._cand_turn_started_ms = self._ms()
+            # Opening the window here, rather than only on the browser's VAD, is what
+            # makes a missed speech_start survivable: audio that arrives outside an
+            # activity window is silently dropped by the model, and the candidate then
+            # talks to an interviewer that cannot hear a word. Two guards keep that
+            # safety net from misfiring: never across the moment a persona is prompted
+            # (`_capture_allowed`), and never on room tone (`_carries_speech`).
+            if self._capture_allowed and _carries_speech(pcm16):
+                self._speech_frames = getattr(self, "_speech_frames", 0) + 1
+                await self._ensure_activity_open()
             await conn.send_audio(pcm16)
+
+    async def _ensure_activity_open(self) -> None:
+        key = self.floor.current
+        conn = self.floor.conn
+        if not key or conn is None or key in self._activity_open:
+            return
+        await conn.signal_activity_start()
+        self._activity_open.add(key)
+
+    async def _close_activity(self) -> None:
+        key = self.floor.current
+        conn = self.floor.conn
+        if not key or conn is None or key not in self._activity_open:
+            return
+        await conn.signal_activity_end()
+        self._activity_open.discard(key)
 
     async def on_speech_start(self) -> None:
         """The browser's VAD heard speech begin. Two jobs: tell the model (so it treats
@@ -844,9 +946,7 @@ class InterviewRuntime:
             return
         if self._cand_turn_started_ms == 0:
             self._cand_turn_started_ms = self._ms()
-        conn = self.floor.conn
-        if conn is not None:
-            await conn.signal_activity_start()
+        await self._ensure_activity_open()
         # Barge-in is only symmetric if BOTH mouths stop: the Gemini stream and,
         # when active, the Agora TTS broadcast.
         if getattr(self, "_convoai", False):
@@ -864,10 +964,100 @@ class InterviewRuntime:
         the candidate's turn, and it is where the moderator gets to choose who answers."""
         if self.ended:
             return
+        self._capture_allowed = False
+        await self._close_activity()
+        # Settle and score OFF the socket's receive loop.
+        #
+        # `interview_ws` awaits this handler inline, so anything slow here stops the
+        # server reading the WebSocket at all. Waiting for the transcription tail and
+        # then running the analyst is seconds of work, and with the read loop parked the
+        # transport applies backpressure and stops answering the browser's keepalive
+        # pings — the interview died mid-answer with a 1011 keepalive timeout. Hand it
+        # to a task and return to reading frames immediately.
+        task = getattr(self, "_settle_task", None)
+        if task is not None and not task.done():
+            return                      # a decision for this answer is already running
+        self._settle_task = asyncio.create_task(
+            self._settle_then_advance(), name="iv-settle")
+
+    async def _settle_then_advance(self) -> None:
+        """The candidate's turn, decided without holding up the socket."""
+        try:
+            await self._await_input_settled()
+            await self._advance_turn()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — a failed turn must not kill the socket
+            await self.emit({"type": "error",
+                             "detail": "{}: {}".format(type(exc).__name__, exc)})
+
+    async def _nudge_silence(self) -> None:
+        """The candidate's turn produced no words. Say something.
+
+        This used to emit `your_turn` and nothing else, which is how the room ended up
+        showing "Listening..." for ever: the panel had already finished speaking, the
+        moderator was never consulted because there was no answer to score, and so no
+        persona was ever asked to talk again. A dead mic or a mis-detected end-of-turn
+        should not silently end the interview.
+
+        The nudge deliberately does NOT go through `_grant_floor`: that calls
+        `mod.note_turn`, and burning one of the interview's counted turns because a
+        transcriber returned nothing would cut the interview short.
+        """
+        self._silent_turns = getattr(self, "_silent_turns", 0) + 1
+        self._capture_allowed = True
+        await self.emit({"type": "your_turn", "seconds_remaining": self.time_left_s(),
+                         "turn": self.mod.turns_taken, "of": self.mod.max_turns})
+        if self._silent_turns > MAX_SILENT_NUDGES:
+            # Stop nagging; the candidate can still type, and the watchdog owns the clock.
+            return
         conn = self.floor.conn
-        if conn is not None:
-            await conn.signal_activity_end()
-        await self._advance_turn()
+        if conn is None:
+            return
+        self._capture_allowed = False
+        await self._close_activity()
+        await conn.send_text(
+            "The candidate said nothing that could be transcribed. In ONE short sentence, "
+            "invite them to answer — or, if this is the second time, tell them they can "
+            "type their answer instead. Do not repeat your question verbatim and do not "
+            "comment on the silence at length.",
+            end_of_turn=True,
+        )
+        self._capture_allowed = True
+
+    async def _await_input_settled(self) -> None:
+        """Block until the candidate's input transcription stops growing.
+
+        The browser knows when the candidate stopped making sound; it cannot know when
+        the transcriber has finished turning that sound into words. Those are seconds
+        apart, and everything downstream — the analyst, the difficulty ladder, the
+        moderator's choice of next speaker — reads the text, so it must wait for it.
+        """
+        started = time.monotonic()
+        deadline = started + CAND_SETTLE_MAX_S
+        # Did the microphone actually carry speech this turn? That, not the clock, is
+        # what separates "they said nothing" from "the transcriber has not caught up
+        # yet". Transcription of a long answer can start arriving many seconds after the
+        # candidate stops, and nudging them to repeat themselves while their answer is
+        # still in flight is the worst possible moment to interrupt.
+        heard_speech = getattr(self, "_speech_frames", 0) > 0
+        last_len = sum(len(c) for c in self._cand_buf)
+        quiet_since = started
+        while time.monotonic() < deadline:
+            await asyncio.sleep(0.1)
+            now_len = sum(len(c) for c in self._cand_buf)
+            if now_len != last_len:
+                last_len = now_len
+                quiet_since = time.monotonic()
+                continue
+            if now_len == 0:
+                # Nothing transcribed yet. Only conclude silence if the mic was silent
+                # too; otherwise keep waiting for the words that are on their way.
+                if not heard_speech and time.monotonic() - started >= CAND_FIRST_WORD_S:
+                    return
+                continue
+            if time.monotonic() - quiet_since >= CAND_SETTLE_S:
+                return
 
     async def on_activity_end(self) -> None:
         """Explicit "Let me finish" / send button — same path as VAD end-of-turn."""
@@ -930,13 +1120,17 @@ class InterviewRuntime:
             return
         self.deciding = True
         try:
+            # Only an answer produced by THIS turn counts. Without the reset a silent turn
+            # re-read the previous answer, so the analyst scored it twice and the panel
+            # asked a follow-up to a question the candidate had already answered.
+            self.last_candidate = None
             await self._flush_candidate_turn()
             cand = self.last_candidate
             if not cand:
                 # Nothing was said — re-prompt the same persona rather than scoring silence.
-                await self.emit({"type": "your_turn", "seconds_remaining": self.time_left_s(),
-                                 "turn": self.mod.turns_taken, "of": self.mod.max_turns})
+                await self._nudge_silence()
                 return
+            self._silent_turns = 0
 
             target = self._target_skill()
 
@@ -1054,7 +1248,12 @@ class InterviewRuntime:
                 kind = ev.get("type")
 
                 if kind == LC.EV_AUDIO:
-                    self._audio_bytes = getattr(self, "_audio_bytes", 0) + len(ev["pcm"] or b"")
+                    n_pcm = len(ev["pcm"] or b"")
+                    self._audio_bytes = getattr(self, "_audio_bytes", 0) + n_pcm
+                    totals = getattr(self, "_audio_total", None)
+                    if totals is None:
+                        totals = self._audio_total = {}
+                    totals[persona_key] = totals.get(persona_key, 0) + n_pcm
                     # Only the persona holding the floor is audible. A late frame from a
                     # persona that just yielded must not talk over its successor.
                     # Also suppress audio when employer has taken over (takeover_active=True).
@@ -1158,21 +1357,36 @@ class InterviewRuntime:
 
         # A turn that produced words but no audio is the "speaking with no sound" bug.
         # Report it rather than leaving the room showing a talking tile in silence.
+        # `_last_turn_had_text` guards it: the debounce can settle a turn that carried no
+        # text of its own (a trailing fragment of an already-flushed sentence), and
+        # warning the candidate that the voice failed while the panel is audibly talking
+        # is worse than saying nothing.
         produced = getattr(self, "_audio_bytes", 0)
-        if produced <= 0:
+        # "The voice did not arrive" is a property of the PERSONA's audio path, not of
+        # one settled fragment. The debounce routinely closes a turn whose audio was
+        # counted against the previous fragment, and warning then — while that same
+        # interviewer is audibly speaking — reads as a broken app. Only warn if this
+        # persona has never produced a single byte of audio all session.
+        ever = getattr(self, "_audio_total", {}).get(persona_key, 0)
+        if produced <= 0 and ever <= 0 and getattr(self, "_last_turn_had_text", False):
             await self.emit({
                 "type": "notice", "level": "warn", "code": "no_audio",
                 "text": "That interviewer's voice did not arrive. You can read their "
                         "question in the transcript and answer by voice or text.",
                 "persona": persona_key,
             })
+        # `ok` reflects the persona's audio path over the session, not this fragment:
+        # the debounce regularly settles a trailing fragment whose audio was counted
+        # against the previous one, and the room shows a red "voice is not coming
+        # through" banner on `ok: false`.
         await self.emit({"type": "audio_health", "persona": persona_key,
-                         "bytes": produced, "ok": produced > 0})
+                         "bytes": produced, "ok": produced > 0 or ever > 0})
         self._audio_bytes = 0
         await self._maybe_summarise()
         if self.mod.turns_taken >= self.mod.max_turns:
             await self.finish(reason="turns")
             return
+        self._capture_allowed = True
         await self.emit({"type": "your_turn", "seconds_remaining": self.time_left_s(),
                          "turn": self.mod.turns_taken, "of": self.mod.max_turns})
 
@@ -1180,8 +1394,11 @@ class InterviewRuntime:
 
     async def _flush_persona_turn(self, persona_key: str) -> None:
         text = clean_spoken("".join(self._persona_buf.pop(persona_key, [])))
+        self._last_turn_had_text = bool(text)
         if not text:
             return
+        # Anything the candidate says from here belongs to a new answer.
+        self._open_cand_turn_id = ""
         turn_id = await self._save_turn(persona_key, text,
                                         attribution=getattr(self, "_turn_attribution", None))
         await self.emit({"type": "transcript", "speaker": persona_key, "text": text,
@@ -1196,12 +1413,53 @@ class InterviewRuntime:
         started = self._cand_turn_started_ms
         self._cand_turn_started_ms = 0
         if not text:
+            # Nothing to settle. Crucially, do NOT clear the speech-frame count here:
+            # this runs whenever a persona starts talking, which includes a trailing
+            # fragment arriving while the candidate is already answering. Forgetting
+            # that the mic had carried speech made the next turn look like silence, and
+            # the panel interrupted a candidate mid-answer to ask them to say something.
             return
+        self._speech_frames = 0
+
+        # A transcription tail that lands after the turn was settled belongs to the
+        # answer that just closed, not to a new one. Appending keeps one answer as one
+        # transcript row and one scored unit; inserting a second row split "…and we kept
+        # a dead letter queue" off from its own sentence and left the analyst grading
+        # half an answer.
+        prev_id = getattr(self, "_open_cand_turn_id", "")
+        if prev_id:
+            merged = await self._append_to_turn(prev_id, text)
+            if merged is not None:
+                self.last_candidate = {"turn_id": prev_id, "text": merged}
+                await self.emit({"type": "transcript", "speaker": "candidate",
+                                 "text": merged, "final": True, "turn_id": prev_id})
+                return
+
         turn_id = await self._save_turn("candidate", text, started_ms=started)
+        self._open_cand_turn_id = turn_id
         # Held for the analyst and for must_reference quoting on the next turn.
         self.last_candidate = {"turn_id": turn_id, "text": text}
         await self.emit({"type": "transcript", "speaker": "candidate", "text": text,
                          "final": True, "turn_id": turn_id})
+
+    async def _append_to_turn(self, turn_id: str, tail: str) -> Optional[str]:
+        """Append a late transcription tail to an existing candidate turn.
+
+        Returns the merged text, or None if the row has gone (in which case the caller
+        stores the tail as a turn of its own rather than losing it).
+        """
+        def work(db) -> Optional[str]:
+            row = db.get(InterviewTurn, turn_id)
+            if row is None:
+                return None
+            row.text = "{} {}".format((row.text or "").rstrip(), tail.lstrip()).strip()
+            return row.text
+
+        try:
+            return await _db(work)
+        except Exception as exc:  # noqa: BLE001 — never lose the words over a DB hiccup
+            print("could not merge transcript tail: {}: {}".format(type(exc).__name__, exc))
+            return None
 
     async def _save_turn(self, speaker: str, text: str, started_ms: int = 0,
                          attribution: Optional[Dict[str, Any]] = None) -> str:
