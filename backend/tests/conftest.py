@@ -29,6 +29,12 @@ os.environ.setdefault("DATABASE_URL", f"sqlite:///{tempfile.mktemp(suffix='.db')
 # voice fallback emits one turn_complete per turn, so shortening it changes nothing
 # about what is being verified.
 os.environ["INTERVIEW_TURN_SETTLE_S"] = "0.02"
+# Same reasoning for the other direction: the candidate-transcription settle window is
+# real wall-clock in production (Gemini keeps transcribing for seconds after the mic
+# stops), and no test needs to sit through it.
+os.environ["INTERVIEW_CAND_SETTLE_S"] = "0.02"
+os.environ["INTERVIEW_CAND_SETTLE_MAX_S"] = "0.2"
+os.environ["INTERVIEW_CAND_FIRST_WORD_S"] = "0.05"
 
 import pytest  # noqa: E402
 

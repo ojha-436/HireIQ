@@ -1,0 +1,49 @@
+# What gets uploaded to Cloud Build as the deploy source.
+#
+# Creating this file REPLACES .gitignore for that purpose, so everything that matters
+# from there is repeated below.
+
+.git/
+.gitignore
+
+# ---- secrets: never leave this machine ----
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+# The committed Agora credential dump. The .gitignore pattern `key_and_secret.txt` does
+# not match the real filename ("key_and_secret (1).txt"), so it is matched by glob here.
+key_and_secret*
+
+# ---- python ----
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# ---- local data: the image seeds its own ----
+*.db
+*.db-journal
+*.sqlite3
+backend/data/onet/*.csv
+
+# ---- not needed to build or run the service ----
+backend/tests/
+docs/
+design-system/
+*.pdf
+*.md
+!README.md
+
+# ---- os / editor ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+node_modules/
+dist/

@@ -30,12 +30,67 @@ def _seed_admin() -> None:
         db.close()
 
 
+def _seed_reference_data() -> None:
+    """Fill the scenario and question banks if they are empty.
+
+    The Dockerfile seeds both at BUILD time, but it seeds them into the SQLite file
+    baked into the image. Pointed at Postgres, that work is invisible: the role-play
+    bank is empty, so rule R7 never fires and PS11 requirement #6 quietly does not
+    happen, and the fallback question bank is empty, so a lull in an interview has
+    nothing behind it. Seeding here instead makes the banks a property of the DATABASE
+    rather than of the image.
+
+    Idempotent by construction — both scripts no-op when their table already has rows —
+    so this costs one COUNT per boot after the first. Never fatal: reference data is
+    what makes an interview good, not what makes the service able to start.
+    """
+    import os  # noqa: PLC0415
+
+    if os.getenv("HIREIQ_TEST"):
+        # The suite builds the app many times over a throwaway SQLite file; shelling out
+        # to the seed scripts each time would add minutes and prove nothing.
+        return
+
+    from .models import InterviewQuestion, Scenario  # noqa: PLC0415
+
+    db = SessionLocal()
+    try:
+        need_scenarios = db.query(Scenario).first() is None
+        need_questions = db.query(InterviewQuestion).first() is None
+    finally:
+        db.close()
+    if not (need_scenarios or need_questions):
+        return
+
+    import subprocess  # noqa: PLC0415
+    import sys  # noqa: PLC0415
+    from pathlib import Path  # noqa: PLC0415
+
+    root = Path(__file__).resolve().parent.parent
+    jobs = []
+    if need_scenarios:
+        jobs.append(["scripts/seed_scenarios.py"])
+    if need_questions:
+        jobs.append(["scripts/seed_questions.py", "--per-skill", "6"])
+    for argv in jobs:
+        if not (root / argv[0]).is_file():
+            continue
+        try:
+            proc = subprocess.run([sys.executable, *argv], cwd=root, capture_output=True,
+                                  text=True, timeout=600, check=False)
+            tail = (proc.stdout or proc.stderr or "").strip().splitlines()[-1:]
+            print("seed {}: rc={} {}".format(argv[0], proc.returncode, " ".join(tail)))
+        except Exception as exc:  # noqa: BLE001
+            print("seed {} failed: {}: {}".format(argv[0], type(exc).__name__, exc))
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     # Dev convenience. Production uses Alembic migrations.
     Base.metadata.create_all(bind=engine)
     run_light_migrations()
     _seed_admin()
+    _seed_reference_data()
     yield
 
 
