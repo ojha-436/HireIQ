@@ -220,14 +220,24 @@ class ResumeParsed(BaseModel):
     skills: list[str]
     years_experience: float | None
     chars: int
-    # Phase 3: what was drafted into the profile from the resume text itself, not just
-    # skills/years. Counts reflect what was actually NEW — existing hand-typed entries
-    # are never overwritten, so a re-upload can legitimately add zero of everything.
+    # What the upload actually did to the profile. A re-upload REPLACES whatever the
+    # previous résumé contributed and leaves hand-typed fields alone, so these counts
+    # are how the UI can say what changed instead of appearing to do nothing.
     headline: str = ""
     summary_drafted: bool = False
     experience_added: int = 0
     education_added: int = 0
     projects_added: int = 0
+    #: Fields this résumé REPLACED because the previous résumé had supplied them.
+    #: A replacement CV that changes nothing is the bug this reports away.
+    replaced_fields: list[str] = []
+    #: Fields left alone because the candidate had typed them by hand.
+    kept_manual_fields: list[str] = []
+    #: Entries dropped because they belonged to the résumé being replaced.
+    entries_replaced: int = 0
+    #: No skills could be read from this file, so the previous ones were kept rather
+    #: than blanking the profile. The UI should ask the candidate to add them by hand.
+    skills_unreadable: bool = False
 
 
 class ApplicationOut(BaseModel):

@@ -93,6 +93,12 @@ def _sections_from_profile(cand: Candidate) -> list[dict[str, Any]]:
         sections.append({"type": "experience", "items": p["experience"]})
     if p.get("education"):
         sections.append({"type": "education", "items": p["education"]})
+    if p.get("projects"):
+        # The grounding assembler has always understood projects — and rates them the
+        # best probe surface there is — but nothing ever handed them over, so every
+        # project a résumé contributed was parsed, stored, shown on the profile, and
+        # then ignored by the panel.
+        sections.append({"type": "projects", "items": p["projects"]})
     return sections
 
 
