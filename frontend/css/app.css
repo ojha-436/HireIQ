@@ -477,6 +477,18 @@
 }
 .match-bar i { display: block; height: 100%; background: var(--p-customer); border-radius: inherit; }
 
+/* ============================================================= READINESS / METER
+   Dashboard dimension bars. Same visual language as .match-bar (a filled track),
+   just taller — these carry a number label next to them, .match-bar does not. */
+.meter { height: 6px; background: var(--surface-3); border-radius: var(--r-full); overflow: hidden; }
+.meter i { display: block; height: 100%; background: var(--accent); border-radius: inherit; }
+
+.readiness-ring { position: relative; width: 168px; height: 168px; flex: none; }
+.readiness-ring-label {
+  position: absolute; inset: 0; align-items: center; justify-content: center;
+  text-align: center; gap: 0;
+}
+
 @media (max-width: 1023px) {
   .board { grid-template-columns: 1fr; }
   .filters { position: static; max-height: none; }

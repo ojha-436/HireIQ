@@ -13,6 +13,7 @@ from ..schemas import (
     CandidateProfileUpdate,
     CandidateRegister,
     LoginRequest,
+    PasswordChange,
     ResumeParsed,
     TokenResponse,
 )
@@ -49,6 +50,9 @@ def login(body: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse:
     cand = db.scalar(select(Candidate).where(Candidate.email == body.email.lower()))
     if cand is None or not verify_password(body.password, cand.password_hash):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Email or password is incorrect")
+    if not cand.is_active:
+        raise HTTPException(status.HTTP_403_FORBIDDEN,
+                            "This account has been suspended. Contact support.")
 
     return TokenResponse(
         token=mint_token(cand.id, "candidate"),
@@ -96,16 +100,22 @@ def update_me(
     return _me(cand)
 
 
+def _dedup_key(item: dict, *fields: str) -> tuple[str, ...]:
+    return tuple(str(item.get(f, "") or "").strip().lower() for f in fields)
+
+
 @router.post("/me/resume", response_model=ResumeParsed)
 async def upload_resume(
     file: UploadFile = File(...),
     cand: Candidate = Depends(current_candidate),
     db: Session = Depends(get_db),
 ) -> ResumeParsed:
-    """Parse a resume into skills + years, and fold the result into the profile.
+    """Parse a resume into a full profile draft, and fold it into the candidate's profile.
 
-    The extracted text is NOT stored. Only the derived skills and year count are kept,
-    which is all that job matching and the interview grounding actually need.
+    The extracted text is NOT stored — only what's derived from it. Skills merge as
+    before. Headline/summary/experience/education/projects merge additively: anything
+    the candidate already typed by hand always wins, so a re-upload can only ADD to a
+    profile, never silently overwrite what someone wrote themselves.
     """
     blob = await file.read()
     try:
@@ -113,11 +123,52 @@ async def upload_resume(
     except ResumeError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
 
+    profile = parsed.get("profile") or {}
     sections = dict(cand.profile_sections_json or {})
-    merged = list(dict.fromkeys([*(sections.get("skills") or []), *parsed["skills"]]))
-    sections["skills"] = merged
-    cand.profile_sections_json = sections
 
+    sections["skills"] = list(dict.fromkeys([*(sections.get("skills") or []), *parsed["skills"]]))
+
+    summary_drafted = False
+    if not str(sections.get("headline") or "").strip() and profile.get("headline"):
+        sections["headline"] = profile["headline"]
+    if not str(sections.get("summary") or "").strip() and profile.get("summary"):
+        sections["summary"] = profile["summary"]
+        summary_drafted = True
+
+    experience = list(sections.get("experience") or [])
+    seen = {_dedup_key(e, "title", "org") for e in experience}
+    added_exp = 0
+    for item in profile.get("experience") or []:
+        key = _dedup_key(item, "title", "org")
+        if key not in seen and key != ("", ""):
+            experience.append(item)
+            seen.add(key)
+            added_exp += 1
+    sections["experience"] = experience[:8]
+
+    education = list(sections.get("education") or [])
+    seen_edu = {_dedup_key(e, "degree", "org") for e in education}
+    added_edu = 0
+    for item in profile.get("education") or []:
+        key = _dedup_key(item, "degree", "org")
+        if key not in seen_edu and key != ("", ""):
+            education.append(item)
+            seen_edu.add(key)
+            added_edu += 1
+    sections["education"] = education[:5]
+
+    projects = list(sections.get("projects") or [])
+    seen_proj = {_dedup_key(p, "title") for p in projects}
+    added_proj = 0
+    for item in profile.get("projects") or []:
+        key = _dedup_key(item, "title")
+        if key not in seen_proj and key != ("",):
+            projects.append(item)
+            seen_proj.add(key)
+            added_proj += 1
+    sections["projects"] = projects[:6]
+
+    cand.profile_sections_json = sections
     if parsed["years"] is not None:
         cand.years_experience = parsed["years"]
     cand.resume_meta_json = {
@@ -133,4 +184,19 @@ async def upload_resume(
     return ResumeParsed(
         filename=parsed["filename"], skills=parsed["skills"],
         years_experience=parsed["years"], chars=parsed["chars"],
+        headline=sections.get("headline") or "", summary_drafted=summary_drafted,
+        experience_added=added_exp, education_added=added_edu, projects_added=added_proj,
     )
+
+
+@router.patch("/me/password")
+def change_password(
+    body: PasswordChange,
+    cand: Candidate = Depends(current_candidate),
+    db: Session = Depends(get_db),
+) -> dict[str, bool]:
+    if not verify_password(body.current_password, cand.password_hash):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Current password is incorrect")
+    cand.password_hash = hash_password(body.new_password)
+    db.commit()
+    return {"ok": True}

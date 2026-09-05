@@ -39,6 +39,50 @@ class EmployerMe(BaseModel):
     tenant_name: str
 
 
+class PasswordChange(BaseModel):
+    """Shared by candidate, employer and admin — same rule, same shape everywhere."""
+    current_password: str
+    new_password: str = Field(min_length=8, max_length=128)
+
+
+# ------------------------------------------------------------------ admin
+class AdminLoginRequest(BaseModel):
+    username: str = Field(min_length=1, max_length=80)
+    password: str
+
+
+class AdminMe(BaseModel):
+    id: int
+    username: str
+
+
+class EmployerAdminOut(BaseModel):
+    id: int
+    name: str
+    domain: str | None
+    active: bool
+    plan: str
+    created_at: datetime
+    job_count: int
+    user_count: int
+
+
+class CandidateAdminOut(BaseModel):
+    id: int
+    full_name: str
+    email: str
+    is_active: bool
+    created_at: datetime
+    application_count: int
+
+
+class JobDescriptionGenerate(BaseModel):
+    title: str = Field(min_length=2, max_length=200)
+    department: str | None = None
+    seniority: str | None = None
+    keywords: list[str] = Field(default_factory=list)
+
+
 # ------------------------------------------------------------------ jobs
 class StageIn(BaseModel):
     seq: int = Field(ge=1, le=12)
@@ -176,6 +220,14 @@ class ResumeParsed(BaseModel):
     skills: list[str]
     years_experience: float | None
     chars: int
+    # Phase 3: what was drafted into the profile from the resume text itself, not just
+    # skills/years. Counts reflect what was actually NEW — existing hand-typed entries
+    # are never overwritten, so a re-upload can legitimately add zero of everything.
+    headline: str = ""
+    summary_drafted: bool = False
+    experience_added: int = 0
+    education_added: int = 0
+    projects_added: int = 0
 
 
 class ApplicationOut(BaseModel):

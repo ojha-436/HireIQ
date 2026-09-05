@@ -403,6 +403,11 @@ class InterviewRuntime:
             if getattr(sess, 'session_type', 'standard') == 'calibration':
                 return self._build_calibration_baseline(sess, db)
 
+            # Practice sessions (Phase 2/13): candidate-initiated, no job application, no
+            # employer side-effects — but coaching runs, which never happens for hiring.
+            if getattr(sess, 'session_type', 'standard') == 'practice':
+                return self._build_practice_report(sess, db, duration)
+
             rows = list(sess.turns)
             if not any(t.speaker == "candidate" for t in rows):
                 return None          # nothing was answered; a report would say nothing
@@ -565,6 +570,64 @@ class InterviewRuntime:
         db.add(baseline)
         db.commit()
         return None   # no InterviewAssessment for calibration sessions
+
+    def _build_practice_report(self, sess, db, duration: int) -> Optional[Dict[str, Any]]:
+        """Practice mode: same engine, no employer, no application, and it coaches.
+
+        Deliberately does NOT touch `JobApplication`, `PipelineStage`, `Notification`, or
+        `audit.log` — none of those concepts exist for a candidate practising on their own.
+        The assessment is released to the candidate immediately: there is no employer to
+        gate it, and withholding a candidate's own practice feedback from themselves would
+        defeat the point (plan.md Phase 2: practice mode coaches; hiring mode does not).
+        """
+        rows = list(sess.turns)
+        if not any(t.speaker == "candidate" for t in rows):
+            return None
+
+        turns = [{"id": t.id, "seq": t.seq, "speaker": t.speaker, "text": t.text,
+                  "analysis_json": t.analysis_json} for t in rows]
+
+        practice_cfg = (sess.state_json or {}).get("practice") or {}
+        job_title = practice_cfg.get("job_title") or ""
+        weights = practice_cfg.get("weights") or None
+
+        report, per_skill = ASSESS.build(
+            turns=turns, panel=list(sess.panel_json or []),
+            job={"title": job_title, "company": ""},
+            required_skill_ids=self.grounding.get("required_skill_ids") or [],
+            claims=self.grounding.get("claims") or [], duration_s=duration,
+            weights=weights,
+        )
+
+        from app.engines import career_coach
+        coaching = career_coach.build_plan(report)
+        if coaching:
+            report["coaching"] = coaching
+
+        existing = db.query(InterviewAssessment).filter(
+            InterviewAssessment.session_id == sess.id).first()
+        if existing:
+            existing.overall = report["overall"]
+            existing.recommendation = report["recommendation"]
+            existing.report_json = report
+            existing.per_skill_json = per_skill
+            assess_row = existing
+        else:
+            assess_row = InterviewAssessment(
+                session_id=sess.id, overall=report["overall"],
+                recommendation=report["recommendation"],
+                report_json=report, per_skill_json=per_skill, source="ai",
+            )
+            db.add(assess_row)
+
+        # No employer to gate release, and no cross-candidate percentile pool — a
+        # candidate always sees their own practice results, and only their own.
+        assess_row.released_to_candidate = True
+        assess_row.released_at = _now()
+        assess_row.percentile = None
+        assess_row.percentile_n = 0
+        db.commit()
+        return report
 
     @staticmethod
     def _courses_for_weak_skills(per_skill: Dict[str, Any]) -> List[Dict[str, Any]]:

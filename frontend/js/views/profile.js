@@ -12,20 +12,21 @@
 
 import { Api, API_BASE } from '../api.js';
 import { Store } from '../store.js';
-import { clear, empty, h, icon, skeletonRows, toast } from '../ui.js';
+import { clear, empty, h, icon, passwordChangeCard, skeletonRows, toast } from '../ui.js';
 
 export function profileView() {
   const host = h('div', {}, [skeletonRows(3, 140)]);
 
-  (async () => {
+  const load = async () => {
     try {
-      clear(host).append(render(await Api.candidate.me()));
+      clear(host).append(render(await Api.candidate.me(), load));
     } catch (err) {
       clear(host).append(h('div', { class: 'card' }, [empty({
         iconName: 'warning', title: 'Could not load your profile', body: err.message,
       })]));
     }
-  })();
+  };
+  load();
 
   return host;
 }
@@ -42,10 +43,11 @@ function field({ id, label, value = '', type = 'text', hint, placeholder, ...att
   };
 }
 
-function render(me) {
+function render(me, onReload) {
   const sections = me.profile_sections_json || {};
   let skills = [...(sections.skills || [])];
   let experience = [...(sections.experience || [])];
+  let education = [...(sections.education || [])];
 
   const name = field({ id: 'p-name', label: 'Full name', value: me.full_name, autocomplete: 'name' });
   const phone = field({ id: 'p-phone', label: 'Phone', value: me.phone, type: 'tel', autocomplete: 'tel' });
@@ -131,7 +133,39 @@ function render(me) {
   };
   renderExp();
 
-  /* ---- resume import ---- */
+  /* ---- education ---- */
+  const eduWrap = h('div', { class: 'col gap3' });
+  const renderEdu = () => {
+    clear(eduWrap).append(
+      ...education.map((ed, i) => {
+        const set = (k) => (e) => { education[i] = { ...education[i], [k]: e.target.value }; };
+        return h('div', { class: 'exp-row' }, [
+          h('div', { class: 'row gap2 wrap grow' }, [
+            h('input', { class: 'input', placeholder: 'Degree', 'aria-label': 'Degree',
+              value: ed.degree || '', onInput: set('degree') }),
+            h('input', { class: 'input', placeholder: 'School', 'aria-label': 'School',
+              value: ed.org || '', onInput: set('org') }),
+            h('input', { class: 'input', placeholder: 'Dates', 'aria-label': 'Dates',
+              value: ed.dates || '', onInput: set('dates'), style: { maxWidth: '150px' } }),
+          ]),
+          h('button', {
+            class: 'icon-btn', type: 'button', 'aria-label': 'Remove this entry',
+            html: icon('x', 16),
+            onClick: () => { education.splice(i, 1); renderEdu(); },
+          }),
+        ]);
+      }),
+      education.length ? null : h('p', { class: 'hint', text: 'Import a resume below, or add your own.' }),
+      h('button', { class: 'btn btn-sm', type: 'button',
+        onClick: () => { education.push({ degree: '', org: '', dates: '' }); renderEdu(); },
+      }, [h('span', { html: icon('plus', 14) }), 'Add education']),
+    );
+  };
+  renderEdu();
+
+  /* ---- resume import — drafts headline/summary/experience/education too, not just
+     skills. Anything already on the profile always wins, so this re-fetches and
+     re-renders the whole view rather than hand-merging fields client-side. */
   const fileInput = h('input', { type: 'file', id: 'p-resume', accept: '.pdf,.txt,.md',
     style: { display: 'none' } });
   const importNote = h('p', { class: 'hint', role: 'status' });
@@ -145,24 +179,20 @@ function render(me) {
     if (!file) return;
     importBtn.disabled = true;
     importBtn.replaceChildren(h('span', { class: 'spin' }), 'Reading…');
-    importNote.style.color = 'var(--text-3)';
     importNote.textContent = '';
     try {
       const parsed = await Api.candidate.uploadResume(file);
-      // Merge rather than replace: anything typed by hand outranks a parse.
-      for (const sk of parsed.skills) if (!skills.includes(sk)) skills.push(sk);
-      renderSkills();
-      if (parsed.years_experience && !years.input.value) {
-        years.input.value = String(parsed.years_experience);
-      }
-      importNote.textContent = `Found ${parsed.skills.length} skills`
-        + (parsed.years_experience ? ` and ${parsed.years_experience} years` : '')
-        + ' — review below, then save.';
-      toast('Resume imported.');
+      const drafted = [];
+      if (parsed.headline) drafted.push('a headline');
+      if (parsed.summary_drafted) drafted.push('a summary');
+      if (parsed.experience_added) drafted.push(`${parsed.experience_added} role${parsed.experience_added === 1 ? '' : 's'}`);
+      if (parsed.education_added) drafted.push(`${parsed.education_added} education entr${parsed.education_added === 1 ? 'y' : 'ies'}`);
+      toast(`Found ${parsed.skills.length} skills` + (drafted.length ? ` and drafted ${drafted.join(', ')}` : '') + '. Review below.');
+      Store.setProfile('candidate', await Api.candidate.me());
+      await onReload();
     } catch (err) {
-      importNote.textContent = err.message;
       importNote.style.color = 'var(--danger)';
-    } finally {
+      importNote.textContent = err.message;
       importBtn.disabled = false;
       importBtn.replaceChildren(h('span', { html: icon('file', 15) }), 'Replace resume');
       fileInput.value = '';
@@ -187,6 +217,7 @@ function render(me) {
           summary: summary.value.trim(),
           skills,
           experience: experience.filter((r) => (r.title || r.org || r.detail || '').trim()),
+          education: education.filter((e) => (e.degree || e.org || '').trim()),
         },
       });
       Store.setProfile('candidate', updated);
@@ -227,6 +258,11 @@ function render(me) {
       expWrap,
     ]),
 
+    h('div', { class: 'card card-pad col gap4' }, [
+      h('h2', { style: { fontSize: 'var(--fs-16)' }, text: 'Education' }),
+      eduWrap,
+    ]),
+
     h('div', { class: 'row gap3' }, [saveBtn]),
   ]);
 
@@ -242,7 +278,7 @@ function render(me) {
       h('aside', { class: 'col gap5 aside-sticky' }, [
         h('div', { class: 'card card-pad col gap4' }, [
           h('h3', { class: 'filter-title', text: 'Import from resume' }),
-          h('p', { class: 'hint', text: 'PDF or plain text, up to 5 MB. We extract skills and years of experience and merge them into the form — nothing is overwritten, and the resume text itself is not stored.' }),
+          h('p', { class: 'hint', text: 'PDF or plain text, up to 5 MB. We draft a headline, summary, experience and education straight from it — nothing already on your profile is overwritten, and the resume text itself is not stored.' }),
           importBtn, fileInput, importNote,
           me.resume_meta_json?.filename
             ? h('p', { class: 'fs11 t3', text: `Last imported: ${me.resume_meta_json.filename}` })
@@ -252,6 +288,7 @@ function render(me) {
           h('h3', { class: 'filter-title', text: 'Why this matters' }),
           h('p', { class: 'hint', text: 'Interviewers are told your claimed skills and roles. That is how the hiring manager can ask you to substantiate something specific — and how the panel avoids asking about work you never did.' }),
         ]),
+        passwordChangeCard({ onSubmit: (body) => Api.candidate.changePassword(body) }),
       ]),
     ]),
   ]);

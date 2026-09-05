@@ -202,7 +202,8 @@ def pending_interviews(
     rows = db.scalars(
         select(InterviewSession)
         .where(InterviewSession.candidate_id == cand.id,
-               InterviewSession.status.in_(["setup", "live"]))
+               InterviewSession.status.in_(["setup", "live"]),
+               InterviewSession.session_type != "practice")
         .order_by(InterviewSession.created_at.desc())
     ).all()
 
@@ -232,12 +233,15 @@ def session_detail(
 
     app_row = db.get(JobApplication, s.job_application_id) if s.job_application_id else None
     job = db.get(JobPosting, app_row.job_id) if app_row else None
+    is_practice = s.session_type == "practice"
+    practice_job_title = ((s.state_json or {}).get("practice") or {}).get("job_title") or ""
     return {
         "session_id": s.id,
         "status": s.status,
         "preset": s.preset,
         "minutes": P.PRESETS.get(s.preset, P.PRESETS["panel"])["minutes"],
-        "job_title": job.title if job else "",
+        "is_practice": is_practice,
+        "job_title": (practice_job_title if is_practice else (job.title if job else "")),
         "panel": [
             {"key": k, "label": P.get(k).label, "voice": P.get(k).voice, "bot_uid": P.get(k).bot_uid}
             for k in (s.panel_json or [])

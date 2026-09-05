@@ -115,6 +115,10 @@ export const Api = {
       post(`/api/employer/applications/${applicationId}/reject`, { role: 'employer', body }),
     releaseFeedback: (applicationId) =>
       post(`/api/employer/applications/${applicationId}/release-feedback`, { role: 'employer' }),
+
+    generateDescription: (body) =>
+      post('/api/employer/jobs/generate-description', { role: 'employer', body }),
+    changePassword: (body) => patch('/api/employer/auth/me/password', { role: 'employer', body }),
   },
 
   candidate: {
@@ -140,5 +144,31 @@ export const Api = {
     apply: (id) => post(`/api/candidate/apply/${id}`, { role: 'candidate' }),
     myApplications: () => get('/api/candidate/me/applications', { role: 'candidate' }),
     application: (id) => get(`/api/candidate/me/applications/${id}`, { role: 'candidate' }),
+
+    dashboard: () => get('/api/candidate/dashboard', { role: 'candidate' }),
+
+    practice: {
+      start: (body) => post('/api/candidate/practice/start', { role: 'candidate', body }),
+      listSessions: () => get('/api/candidate/practice/sessions', { role: 'candidate' }),
+      report: (sessionId) =>
+        get(`/api/candidate/practice/sessions/${sessionId}/report`, { role: 'candidate' }),
+      progress: () => get('/api/candidate/practice/progress', { role: 'candidate' }),
+    },
+
+    changePassword: (body) => patch('/api/candidate/auth/me/password', { role: 'candidate', body }),
+  },
+
+  admin: {
+    login: (body) => post('/api/admin/auth/login', { body }),
+    me: () => get('/api/admin/auth/me', { role: 'admin' }),
+    changePassword: (body) => patch('/api/admin/auth/me/password', { role: 'admin', body }),
+
+    listEmployers: () => get('/api/admin/employers', { role: 'admin' }),
+    toggleEmployer: (id) => post(`/api/admin/employers/${id}/toggle-active`, { role: 'admin' }),
+    listCandidates: () => get('/api/admin/candidates', { role: 'admin' }),
+    toggleCandidate: (id) => post(`/api/admin/candidates/${id}/toggle-active`, { role: 'admin' }),
+
+    health: () => get('/api/admin/health', { role: 'admin' }),
+    kpis: () => get('/api/admin/kpis', { role: 'admin' }),
   },
 };

@@ -6,7 +6,7 @@ import { Api } from '../api.js';
 import { go } from '../router.js';
 import {
   clear, difficultyGauge, empty, fmtDate, h, icon, initials,
-  modal, personaChip, relTime, skeletonRows, toast,
+  modal, passwordChangeCard, personaChip, relTime, skeletonRows, toast,
 } from '../ui.js';
 
 const STATUS_LABEL = { draft: 'Draft', open: 'Open', paused: 'Paused', closed: 'Closed' };
@@ -18,6 +18,16 @@ const pageHead = (title, sub, actions) => h('header', { class: 'page-head row-be
   ]),
   actions ? h('div', { class: 'row gap3' }, actions) : null,
 ]);
+
+/* ---------------------------------------------------------------- settings */
+export function settingsView() {
+  return h('div', { class: 'page' }, [
+    pageHead('Account settings'),
+    h('div', { style: { maxWidth: '480px' } }, [
+      passwordChangeCard({ onSubmit: (body) => Api.employer.changePassword(body) }),
+    ]),
+  ]);
+}
 
 /* ------------------------------------------------------------- roles list */
 export function jobsList() {
@@ -239,18 +249,17 @@ export function pipelineBuilder(initial) {
   };
 }
 
-/* ---------------------------------------------------------- role composer */
-export function jobNew() {
-  const title = input({ name: 'title', label: 'Role title', required: true, placeholder: 'Senior Backend Engineer' });
-  const dept = input({ name: 'department', label: 'Team', placeholder: 'Platform' });
-  const loc = input({ name: 'location', label: 'Location', placeholder: 'Bengaluru · Hybrid' });
-
+/* ---------------------------------------------------- JD editor + AI drafting
+   Shared by the role composer and the role editor: a textarea, a live client-side
+   skill preview, and a "Generate with AI" button that calls the server (Gemini when
+   configured, an honest deterministic template otherwise — see jd_generator.py). */
+function jdEditor({ initialValue = '', getTitle, getDepartment, showPipelineNote = true }) {
   const jd = h('textarea', {
     class: 'textarea', id: 'f-jd', name: 'jd_text',
-    placeholder: 'Paste the job description. Skills are extracted from it, and the interview panel is proposed from those skills.',
+    placeholder: 'Paste the job description, or generate a draft from the role title.',
   });
+  jd.value = initialValue;
 
-  // Live skill preview — shows the employer what the interview will be grounded in.
   const preview = h('div', { class: 'card card-pad col gap4', style: { position: 'sticky', top: 'calc(60px + var(--s6))' } });
   const renderPreview = () => {
     const found = detectSkills(jd.value);
@@ -262,15 +271,63 @@ export function jobNew() {
       found.length
         ? h('div', { class: 'skills' }, found.map((s) => h('span', { class: 'chip', text: s })))
         : h('p', { class: 'hint', text: 'Skills appear here as you paste. The server re-extracts on save — this preview is indicative.' }),
-      h('hr', { class: 'hr' }),
-      h('p', { class: 'hint' }, [
+      showPipelineNote ? h('hr', { class: 'hr' }) : null,
+      showPipelineNote ? h('p', { class: 'hint' }, [
         'A default pipeline is created for you: an ',
         h('strong', { style: { color: 'var(--text-2)' }, text: 'AI Panel Interview' }),
         ' stage followed by a human round. You can change the panel and starting difficulty after saving.',
-      ]),
+      ]) : null,
     );
   };
   jd.addEventListener('input', renderPreview);
+
+  const genBtn = h('button', { class: 'btn btn-sm', type: 'button' }, [
+    h('span', { html: icon('activity', 13) }), 'Generate with AI',
+  ]);
+  genBtn.onclick = async () => {
+    const title = (getTitle() || '').trim();
+    if (!title) { toast('Give the role a title first — the draft is written from it.', 'err'); return; }
+    genBtn.disabled = true;
+    genBtn.replaceChildren(h('span', { class: 'spin' }), 'Drafting…');
+    try {
+      const result = await Api.employer.generateDescription({
+        title, department: (getDepartment() || '').trim() || null,
+      });
+      jd.value = result.jd_text;
+      renderPreview();
+      toast(result.source === 'ai'
+        ? 'Drafted with AI. Review and edit before publishing.'
+        : 'Drafted from a template (no AI model configured). Review and edit before publishing.');
+    } catch (err) {
+      toast(err.message, 'err');
+    } finally {
+      genBtn.disabled = false;
+      genBtn.replaceChildren(h('span', { html: icon('activity', 13) }), 'Generate with AI');
+    }
+  };
+
+  renderPreview();
+  return {
+    jdCard: h('div', { class: 'card card-pad col gap3' }, [
+      h('div', { class: 'row-between wrap gap3' }, [
+        h('label', { class: 'label', for: 'f-jd', text: 'Job description' }),
+        genBtn,
+      ]),
+      jd,
+      h('p', { class: 'hint', text: 'This text grounds the interview. The panel asks about what is written here — vague JDs produce vague interviews.' }),
+    ]),
+    preview,
+    get value() { return jd.value; },
+  };
+}
+
+/* ---------------------------------------------------------- role composer */
+export function jobNew() {
+  const title = input({ name: 'title', label: 'Role title', required: true, placeholder: 'Senior Backend Engineer' });
+  const dept = input({ name: 'department', label: 'Team', placeholder: 'Platform' });
+  const loc = input({ name: 'location', label: 'Location', placeholder: 'Bengaluru · Hybrid' });
+
+  const jdField = jdEditor({ getTitle: () => title.value, getDepartment: () => dept.value });
 
   const country = input({ name: 'country', label: 'Country', placeholder: 'India' });
   const mode = h('select', { class: 'select', id: 'f-mode', name: 'remote_mode' },
@@ -294,7 +351,7 @@ export function jobNew() {
       const job = await Api.employer.createJob({
         title: title.value, department: dept.value || null,
         location: loc.value || null, country: country.value || null,
-        remote_mode: mode.value, jd_text: jd.value,
+        remote_mode: mode.value, jd_text: jdField.value,
         min_experience_years: expMin.value === '' ? null : Number(expMin.value),
         max_experience_years: expMax.value === '' ? null : Number(expMax.value),
         stages: pipeline.value(),
@@ -325,11 +382,7 @@ export function jobNew() {
         ]),
       ]),
     ]),
-    h('div', { class: 'card card-pad col gap3' }, [
-      h('label', { class: 'label', for: 'f-jd', text: 'Job description' }),
-      jd,
-      h('p', { class: 'hint', text: 'This text grounds the interview. The panel asks about what is written here — vague JDs produce vague interviews.' }),
-    ]),
+    jdField.jdCard,
     h('div', { class: 'card card-pad col gap5' }, [
       h('div', { class: 'col gap2' }, [
         h('h2', { style: { fontSize: 'var(--fs-16)' }, text: 'Hiring pipeline' }),
@@ -343,12 +396,10 @@ export function jobNew() {
     ]),
   ]);
 
-  renderPreview();
-
   return h('div', { class: 'page' }, [
     pageHead('New role', 'Two things matter here: the title candidates search for, and the description the panel interviews against.'),
     h('div', { class: 'split-main tight' }, [
-      form, preview,
+      form, jdField.preview,
     ]),
   ]);
 }
@@ -376,7 +427,11 @@ function renderJob(job, applicants) {
   const aiStage = job.stages.find((s) => s.kind === 'ai_interview');
   const cfg = aiStage?.interview_config_json || {};
 
-  const actions = [];
+  const actions = [
+    h('a', { class: 'btn', href: `#/employer/jobs/${job.id}/edit` }, [
+      h('span', { html: icon('pencil', 14) }), 'Edit role',
+    ]),
+  ];
   if (job.status === 'draft' || job.status === 'paused') {
     actions.push(h('button', {
       class: 'btn btn-primary', type: 'button',
@@ -500,6 +555,129 @@ function renderJob(job, applicants) {
           ]),
         ]),
       ]),
+    ]),
+  ]);
+}
+
+/* -------------------------------------------------------------- role editor */
+export function jobEdit({ id }) {
+  const host = h('div', { class: 'page' }, [skeletonRows(4, 96)]);
+
+  (async () => {
+    try {
+      clear(host).append(renderJobEdit(await Api.employer.getJob(id)));
+    } catch (err) {
+      clear(host).append(errorPanel(err, () => go('/employer/jobs')));
+    }
+  })();
+
+  return host;
+}
+
+function renderJobEdit(job) {
+  const title = input({ name: 'e-title', label: 'Role title', required: true, placeholder: 'Senior Backend Engineer' });
+  title.input.value = job.title || '';
+  const dept = input({ name: 'e-department', label: 'Team', placeholder: 'Platform' });
+  dept.input.value = job.department || '';
+  const loc = input({ name: 'e-location', label: 'Location', placeholder: 'Bengaluru · Hybrid' });
+  loc.input.value = job.location || '';
+  const country = input({ name: 'e-country', label: 'Country', placeholder: 'India' });
+  country.input.value = job.country || '';
+
+  const jdField = jdEditor({
+    initialValue: job.jd_text || '', getTitle: () => title.value, getDepartment: () => dept.value,
+    showPipelineNote: false,
+  });
+
+  const mode = h('select', { class: 'select', id: 'e-mode', name: 'remote_mode' },
+    [['onsite', 'On site'], ['hybrid', 'Hybrid'], ['remote', 'Remote']].map(([v, l]) =>
+      h('option', { value: v, selected: job.remote_mode === v || null, text: l })));
+  const expMin = h('input', { class: 'input', type: 'number', min: '0', max: '50',
+    id: 'e-expmin', placeholder: 'From', 'aria-label': 'Minimum years of experience',
+    value: job.min_experience_years ?? '' });
+  const expMax = h('input', { class: 'input', type: 'number', min: '0', max: '50',
+    id: 'e-expmax', placeholder: 'To', 'aria-label': 'Maximum years of experience',
+    value: job.max_experience_years ?? '' });
+
+  const seatedCount = job.applicant_count || 0;
+  const pipeline = pipelineBuilder(job.stages.map((s) => ({
+    name: s.name, kind: s.kind, interview_config_json: s.interview_config_json,
+  })));
+
+  const btn = h('button', { class: 'btn btn-primary', type: 'submit', text: 'Save changes' });
+  const form = h('form', { class: 'col gap6', novalidate: true, onSubmit: async (e) => {
+    e.preventDefault();
+    if (!title.value) { title.setError('Give the role a title so candidates can find it'); title.input.focus(); return; }
+
+    btn.disabled = true;
+    btn.replaceChildren(h('span', { class: 'spin' }), 'Saving…');
+    try {
+      await Api.employer.updateJob(job.id, {
+        title: title.value, department: dept.value || null,
+        location: loc.value || null, country: country.value || null,
+        remote_mode: mode.value, jd_text: jdField.value,
+        min_experience_years: expMin.value === '' ? null : Number(expMin.value),
+        max_experience_years: expMax.value === '' ? null : Number(expMax.value),
+      });
+
+      try {
+        await Api.employer.replacePipeline(job.id, pipeline.value());
+      } catch (pipelineErr) {
+        // Job fields saved fine; only the pipeline replace was refused (candidates
+        // already seated). Say so plainly rather than losing the rest of the save.
+        toast(`Role details saved. Pipeline unchanged: ${pipelineErr.message}`, 'err');
+        go(`/employer/jobs/${job.id}`);
+        return;
+      }
+
+      toast('Role updated.');
+      go(`/employer/jobs/${job.id}`);
+    } catch (err) {
+      toast(err.message, 'err');
+      btn.disabled = false;
+      btn.replaceChildren('Save changes');
+    }
+  } }, [
+    h('div', { class: 'card card-pad col gap5' }, [
+      title.node,
+      h('div', { class: 'row gap4 wrap' }, [
+        h('div', { class: 'grow' }, [dept.node]),
+        h('div', { class: 'grow' }, [loc.node]),
+        h('div', { class: 'grow' }, [country.node]),
+      ]),
+      h('div', { class: 'row gap4 wrap' }, [
+        h('div', { class: 'field grow' }, [
+          h('label', { class: 'label', for: 'e-mode', text: 'Work mode' }), mode,
+        ]),
+        h('div', { class: 'field grow' }, [
+          h('span', { class: 'label', text: 'Experience (years)' }),
+          h('div', { class: 'row gap2' }, [expMin, expMax]),
+        ]),
+      ]),
+    ]),
+    jdField.jdCard,
+    h('div', { class: 'card card-pad col gap5' }, [
+      h('div', { class: 'col gap2' }, [
+        h('h2', { style: { fontSize: 'var(--fs-16)' }, text: 'Hiring pipeline' }),
+        seatedCount
+          ? h('p', { class: 'hint', text: `${seatedCount} candidate${seatedCount === 1 ? ' has' : 's have'} already applied. Stage changes are refused once a candidate is seated in a stage — you can still edit panel/difficulty on stages nobody has reached yet.` })
+          : h('p', { class: 'hint', text: 'Choose which stages the AI panel runs and which your team runs.' }),
+      ]),
+      pipeline.node,
+    ]),
+    h('div', { class: 'row gap3' }, [
+      btn,
+      h('a', { class: 'btn btn-ghost', href: `#/employer/jobs/${job.id}`, text: 'Cancel' }),
+    ]),
+  ]);
+
+  return h('div', { class: 'col gap6' }, [
+    h('a', { class: 'backlink', href: `#/employer/jobs/${job.id}` }, [
+      h('span', { html: icon('arrowLeft', 15) }), job.title,
+    ]),
+    pageHead('Edit role', 'Changes take effect immediately — a published role updates live for candidates.'),
+    h('div', { class: 'split-main tight' }, [
+      form, jdField.preview,
     ]),
   ]);
 }

@@ -12,14 +12,33 @@ from ..models import AuditLog, Candidate, JobApplication, JobPosting, PipelineSt
 from ..schemas import (
     ApplicantOut,
     JobCreate,
+    JobDescriptionGenerate,
     JobOut,
     JobUpdate,
     PipelineReplace,
     StageOut,
 )
+from ..services import jd_generator
 from ..services.skills import default_pipeline, extract_experience_range, extract_skills
 
 router = APIRouter(prefix="/api/employer/jobs", tags=["employer-jobs"])
+
+
+@router.post("/generate-description")
+def generate_description(
+    body: JobDescriptionGenerate,
+    user: TenantUser = Depends(current_employer),
+) -> dict[str, str]:
+    """Draft a job description from a title (+ optional department/seniority/keywords).
+
+    Uses Gemini when configured, otherwise a deterministic template — either way the
+    employer gets a full, editable draft back. Nothing is saved by this call; the
+    employer reviews and edits before it ever reaches `POST /` or `PATCH /{job_id}`.
+    """
+    return jd_generator.generate(
+        title=body.title, department=body.department,
+        seniority=body.seniority, keywords=body.keywords,
+    )
 
 
 def _audit(db: Session, user: TenantUser, action: str, subject_id: int, payload: dict) -> None:

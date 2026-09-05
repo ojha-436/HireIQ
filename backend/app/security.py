@@ -1,7 +1,7 @@
 """Stdlib-only auth primitives: PBKDF2-SHA256 password hashing + HS256 JWT.
 
-Two token audiences ('employer', 'candidate') signed with two different secrets, so a
-token minted for one portal is structurally unusable against the other.
+Three token audiences ('employer', 'candidate', 'admin') signed with three different
+secrets, so a token minted for one portal is structurally unusable against the others.
 """
 from __future__ import annotations
 
@@ -48,7 +48,11 @@ def _b64u_decode(seg: str) -> bytes:
 
 def _secret_for(audience: str) -> str:
     s = get_settings()
-    return s.employer_jwt_secret if audience == "employer" else s.jwt_secret
+    if audience == "employer":
+        return s.employer_jwt_secret
+    if audience == "admin":
+        return s.admin_jwt_secret
+    return s.jwt_secret
 
 
 def mint_token(subject: str, audience: str, claims: dict[str, Any] | None = None) -> str:

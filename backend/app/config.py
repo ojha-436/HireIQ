@@ -33,6 +33,7 @@ class Settings:
     def __init__(self) -> None:
         self.jwt_secret = os.getenv("JWT_SECRET", "dev-candidate-secret-change-me")
         self.employer_jwt_secret = os.getenv("EMPLOYER_JWT_SECRET", "dev-employer-secret-change-me")
+        self.admin_jwt_secret = os.getenv("ADMIN_JWT_SECRET", "dev-admin-secret-change-me")
         self.jwt_ttl_hours = int(os.getenv("JWT_TTL_HOURS", "12"))
 
         self.database_url = os.getenv("DATABASE_URL", "sqlite:///./dev.db")

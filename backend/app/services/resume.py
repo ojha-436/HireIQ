@@ -90,6 +90,140 @@ def parse_resume(filename: str, blob: bytes) -> dict[str, Any]:
         "skills": extract_skills(text, limit=30),
         "years": parse_years(text),
         "text": text,
+        "profile": parse_profile_sections(text),
+    }
+
+
+# ------------------------------------------------------------- profile-section parsing
+#: Header aliases, matched against a whole line (case-insensitive, punctuation stripped).
+#: Deliberately a fixed lexicon rather than a model call — same reasoning as skill
+#: extraction: free, offline, and its failure mode is an empty section, never a
+#: fabricated one.
+_HEADER_ALIASES: dict[str, set[str]] = {
+    "summary": {"summary", "profile", "objective", "about", "about me", "professional summary"},
+    "experience": {"experience", "work experience", "employment", "employment history",
+                   "professional experience", "work history"},
+    "education": {"education", "academic background", "education and training"},
+    "projects": {"projects", "personal projects", "academic projects", "key projects"},
+    "skills": {"skills", "technical skills", "core competencies", "skills and tools"},
+}
+
+_TITLE_WORDS = ("engineer", "developer", "manager", "analyst", "designer", "lead",
+                "architect", "director", "consultant", "specialist", "scientist",
+                "intern", "founder", "administrator", "programmer")
+
+_MONTH = r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?"
+_DATE_RANGE = re.compile(
+    rf"(?:{_MONTH}\s*)?(?:19|20)\d{{2}}\s*(?:-|to|–|—)\s*"
+    rf"(?:(?:{_MONTH}\s*)?(?:19|20)\d{{2}}|present|current)", re.I,
+)
+
+
+def _match_header(line: str) -> str | None:
+    low = line.strip().strip(":-—–").lower()
+    if not low or len(low) > 40:
+        return None
+    return next((key for key, names in _HEADER_ALIASES.items() if low in names), None)
+
+
+def _split_sections(text: str) -> dict[str, list[str]]:
+    """One pass over the resume, bucketing lines under the last header seen."""
+    sections: dict[str, list[str]] = {"_header": []}
+    current = "_header"
+    for raw in text.splitlines():
+        key = _match_header(raw)
+        if key:
+            current = key
+            sections.setdefault(current, [])
+            continue
+        sections.setdefault(current, []).append(raw)
+    return sections
+
+
+def _blocks(lines: list[str]) -> list[list[str]]:
+    """Split a section's lines into blank-line-separated blocks — one block per entry."""
+    blocks: list[list[str]] = []
+    cur: list[str] = []
+    for line in lines:
+        if not line.strip():
+            if cur:
+                blocks.append(cur)
+                cur = []
+            continue
+        cur.append(line.strip())
+    if cur:
+        blocks.append(cur)
+    return blocks
+
+
+def _split_head(head: str) -> tuple[str, str, str]:
+    """'Senior Engineer — Acme Corp (2021-2023)' -> ('Senior Engineer', 'Acme Corp', dates)."""
+    m = _DATE_RANGE.search(head)
+    dates = m.group(0) if m else ""
+    rest = (head[: m.start()] if m else head).strip(" ,.-–—|()")
+    parts = re.split(r"\s+[-|–—@]\s+|,\s+", rest, maxsplit=1)
+    first = parts[0].strip()
+    second = parts[1].strip() if len(parts) > 1 else ""
+    return first, second, dates
+
+
+def _guess_headline(header_lines: list[str]) -> str:
+    """The first short, title-shaped line after the name — never the name itself."""
+    for line in header_lines[1:8]:
+        s = line.strip()
+        if not s or "@" in s or re.search(r"\d{3}", s):
+            continue   # contact info: email, phone, address
+        if len(s) <= 80 and any(w in s.lower() for w in _TITLE_WORDS):
+            return s
+    return ""
+
+
+def _guess_experience(lines: list[str], limit: int = 6) -> list[dict[str, str]]:
+    out = []
+    for block in _blocks(lines)[:limit]:
+        title, org, dates = _split_head(block[0])
+        if not title:
+            continue
+        out.append({"title": title[:120], "org": org[:120], "dates": dates[:40],
+                    "detail": " ".join(block[1:]).strip()[:500]})
+    return out
+
+
+def _guess_education(lines: list[str], limit: int = 3) -> list[dict[str, str]]:
+    out = []
+    for block in _blocks(lines)[:limit]:
+        degree, org, dates = _split_head(block[0])
+        if not degree:
+            continue
+        out.append({"degree": degree[:120], "org": org[:120], "dates": dates[:40]})
+    return out
+
+
+def _guess_projects(lines: list[str], limit: int = 4) -> list[dict[str, str]]:
+    out = []
+    for block in _blocks(lines)[:limit]:
+        title = block[0].strip(" -–—")
+        if not title:
+            continue
+        out.append({"title": title[:120], "detail": " ".join(block[1:]).strip()[:400]})
+    return out
+
+
+def parse_profile_sections(text: str) -> dict[str, Any]:
+    """Best-effort, deterministic resume -> profile-shape extraction.
+
+    Mirrors the shape `profile.js` already writes by hand (headline/summary/skills/
+    experience/education/projects) so a parsed résumé and a hand-typed profile merge
+    without a translation step. Every field's failure mode is empty, never invented —
+    this is heuristics over section headers and date ranges, not a language model.
+    """
+    sections = _split_sections(text)
+    return {
+        "headline": _guess_headline(sections.get("_header", [])),
+        "summary": " ".join(l.strip() for l in sections.get("summary", []) if l.strip())[:600],
+        "experience": _guess_experience(sections.get("experience", [])),
+        "education": _guess_education(sections.get("education", [])),
+        "projects": _guess_projects(sections.get("projects", [])),
     }
 
 
