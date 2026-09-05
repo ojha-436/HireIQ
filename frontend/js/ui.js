@@ -233,6 +233,48 @@ export function difficultyGauge(level) {
 }
 
 
+/* ---------------------------------------------------------- password change
+   Shared by the candidate, employer and admin settings pages — same fields, same
+   flow, same server contract ({current_password, new_password}) in all three. */
+export function passwordChangeCard({ onSubmit }) {
+  const current = h('input', { class: 'input', type: 'password', id: 'pw-current',
+    autocomplete: 'current-password', required: true });
+  const next = h('input', { class: 'input', type: 'password', id: 'pw-new',
+    autocomplete: 'new-password', required: true, minlength: '8' });
+  const btn = h('button', { class: 'btn btn-primary', type: 'submit', text: 'Update password' });
+
+  const form = h('form', { class: 'col gap4', novalidate: true, onSubmit: async (e) => {
+    e.preventDefault();
+    if (next.value.length < 8) { toast('Use at least 8 characters for the new password', 'err'); return; }
+    btn.disabled = true;
+    btn.replaceChildren(h('span', { class: 'spin' }), 'Updating…');
+    try {
+      await onSubmit({ current_password: current.value, new_password: next.value });
+      toast('Password updated.');
+      form.reset();
+    } catch (err) {
+      toast(err.message, 'err');
+    } finally {
+      btn.disabled = false;
+      btn.replaceChildren('Update password');
+    }
+  } }, [
+    h('div', { class: 'field' }, [
+      h('label', { class: 'label', for: 'pw-current', text: 'Current password' }), current,
+    ]),
+    h('div', { class: 'field' }, [
+      h('label', { class: 'label', for: 'pw-new', text: 'New password' }), next,
+      h('p', { class: 'hint', text: 'At least 8 characters.' }),
+    ]),
+    btn,
+  ]);
+
+  return h('div', { class: 'card card-pad col gap4' }, [
+    h('h2', { style: { fontSize: 'var(--fs-16)' }, text: 'Change password' }),
+    form,
+  ]);
+}
+
 /* ------------------------------------------------------------ theme control
    Three states, cycled by one button. The label always names the CURRENT setting, not
    the next one — a control that says "Dark" while showing a light page is a riddle. */

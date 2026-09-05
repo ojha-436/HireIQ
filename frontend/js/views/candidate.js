@@ -8,6 +8,7 @@ import {
   clear, debounce, empty, fmtDate, h, icon,
   relTime, skeletonRows, toast,
 } from '../ui.js';
+import { startPractice } from './practice.js';
 
 function expLabel(job) {
   const lo = job.min_experience_years;
@@ -309,6 +310,21 @@ export function jobDetail({ id }) {
 }
 
 function renderJob(job) {
+  const practiceBtn = h('button', {
+    class: 'btn btn-block', type: 'button', text: 'Practice this job',
+    onClick: async () => {
+      practiceBtn.disabled = true;
+      practiceBtn.replaceChildren(h('span', { class: 'spin' }), 'Starting…');
+      try {
+        await startPractice({ jobId: job.id });
+      } catch (err) {
+        toast(err.message, 'err');
+        practiceBtn.disabled = false;
+        practiceBtn.replaceChildren('Practice this job');
+      }
+    },
+  });
+
   const applyBtn = h('button', {
     class: 'btn btn-primary btn-lg', type: 'button',
     disabled: job.already_applied || null,
@@ -365,6 +381,11 @@ function renderJob(job) {
           job.already_applied
             ? h('p', { class: 'hint', text: 'You have already applied. Progress shows under My applications.' })
             : h('p', { class: 'hint', text: 'Your profile is sent with the application. You can update it any time before the interview.' }),
+          h('hr', { class: 'hr' }),
+          practiceBtn,
+          h('p', { class: 'hint', text: job.missing_skills?.length
+            ? `Run the same AI panel against this role's skills first — including ${job.missing_skills.slice(0, 2).join(' and ')}, where your profile has a gap. Nothing is shared with the employer.`
+            : 'Run the same AI panel against this role’s skills before you apply. Nothing is shared with the employer.' }),
         ]),
 
         job.stage_names.length ? h('div', { class: 'card card-pad col gap4' }, [

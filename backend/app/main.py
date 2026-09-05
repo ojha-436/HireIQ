@@ -10,16 +10,32 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
-from .db import Base, engine
-from .routers import (candidate_auth, candidate_jobs, employer_auth, employer_jobs,
-                      interview)
+from .db import Base, SessionLocal, engine, run_light_migrations
+from .models import AdminUser
+from .routers import (admin, candidate_auth, candidate_jobs, employer_auth,
+                      employer_jobs, interview, practice)
+from .security import hash_password
 
 settings = get_settings()
+
+
+def _seed_admin() -> None:
+    """First run only: 'admin' / 'admin@123', changeable via the admin settings page."""
+    db = SessionLocal()
+    try:
+        if db.query(AdminUser).first() is None:
+            db.add(AdminUser(username="admin", password_hash=hash_password("admin@123")))
+            db.commit()
+    finally:
+        db.close()
+
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     # Dev convenience. Production uses Alembic migrations.
     Base.metadata.create_all(bind=engine)
+    run_light_migrations()
+    _seed_admin()
     yield
 
 
@@ -43,6 +59,8 @@ app.include_router(employer_jobs.router)
 app.include_router(candidate_auth.router)
 app.include_router(candidate_jobs.router)
 app.include_router(interview.router)
+app.include_router(practice.router)
+app.include_router(admin.router)
 
 
 @app.get("/api/health", tags=["meta"])

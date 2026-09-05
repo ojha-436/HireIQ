@@ -283,7 +283,7 @@ export function candidateLogin() {
       const res = await Api.candidate.login({ email: email.value, password: password.value });
       Store.signIn('candidate', res.token);
       Store.setProfile('candidate', await Api.candidate.me());
-      go('/candidate/jobs');
+      go('/candidate/dashboard');
     });
   } }, [
     portalChip('candidate'),
@@ -323,8 +323,8 @@ export function candidateRegister() {
       });
       Store.signIn('candidate', res.token);
       Store.setProfile('candidate', await Api.candidate.me());
-      toast('Account created. Find a role to apply to.');
-      go('/candidate/jobs');
+      toast('Account created. Try a practice interview or find a role to apply to.');
+      go('/candidate/dashboard');
     });
   } }, [
     portalChip('candidate'),

@@ -110,7 +110,9 @@ export function interviewGate({ id }) {
       h('div', { class: 'col gap3' }, [
         h('span', { class: 'ai-badge' }, [h('span', { html: icon('activity', 12) }), 'AI interview']),
         h('h1', { class: 'display', style: { fontSize: 'var(--fs-28)' },
-          text: session.job_title ? `Interview — ${session.job_title}` : 'Panel interview' }),
+          text: session.job_title
+            ? `${session.is_practice ? 'Practice' : 'Interview'} — ${session.job_title}`
+            : (session.is_practice ? 'Practice interview' : 'Panel interview') }),
       ]),
 
       h('p', { class: 't2 fs13', text: session.disclosure_text }),
@@ -119,7 +121,9 @@ export function interviewGate({ id }) {
         [ 'users', `You will speak with ${(session.panel || []).length} AI interviewers, each with a different focus.` ],
         [ 'mic', 'Speak naturally. You can interrupt an interviewer at any time — they will stop.' ],
         [ 'clock', `The interview runs about ${session.minutes} minutes.` ],
-        [ 'file', 'Your answers are transcribed. Feedback is released by the hiring team after review.' ],
+        [ 'file', session.is_practice
+          ? 'Your answers are transcribed. Your report and improvement plan are ready the moment the interview ends — nothing is shared with any employer.'
+          : 'Your answers are transcribed. Feedback is released by the hiring team after review.' ],
       ].map(([ic, text]) => h('li', {}, [h('span', { html: icon(ic, 15) }), h('span', { text })]))),
 
       /* Typing is an equal way to answer, not a fallback for a broken microphone.
@@ -148,7 +152,9 @@ export function interviewGate({ id }) {
       ]),
 
       startBtn,
-      h('a', { class: 'btn btn-ghost btn-block', href: '#/candidate/applications', text: 'Not now' }),
+      h('a', { class: 'btn btn-ghost btn-block',
+        href: session.is_practice ? '#/candidate/practice' : '#/candidate/applications',
+        text: 'Not now' }),
     ]));
   })();
 
@@ -173,7 +179,9 @@ async function mountRoom(host, sessionId, session) {
     sessionId,
     token: Store.token('candidate'),
     session,
-    onExit: () => go('/candidate/applications'),
+    onExit: () => go(session.is_practice
+      ? `/candidate/practice/${sessionId}/report`
+      : '/candidate/applications'),
   });
   await room.start();
 }

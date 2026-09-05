@@ -19,6 +19,9 @@ import * as Monitor from './views/monitor.js';
 import * as Review from './views/review.js';
 import * as Application from './views/application.js';
 import * as Profile from './views/profile.js';
+import * as Dashboard from './views/dashboard.js';
+import * as Practice from './views/practice.js';
+import * as Admin from './views/admin.js';
 
 const root = document.getElementById('root');
 
@@ -50,6 +53,7 @@ const EMPLOYER_NAV = [
   { href: '#/employer/jobs', label: 'Roles', ico: 'briefcase', match: '/employer/jobs' },
   { href: '#/employer/candidates', label: 'Candidates', ico: 'users', match: '/employer/candidates' },
   { href: '#/employer/analytics', label: 'Analytics', ico: 'chart', match: '/employer/analytics' },
+  { href: '#/employer/settings', label: 'Settings', ico: 'user', match: '/employer/settings' },
 ];
 
 function employerShell(view) {
@@ -111,7 +115,9 @@ function employerShell(view) {
 
 /* --------------------------------------------------- candidate portal shell */
 const CANDIDATE_NAV = [
+  { href: '#/candidate/dashboard', label: 'Dashboard', match: '/candidate/dashboard' },
   { href: '#/candidate/jobs', label: 'Open roles', match: '/candidate/jobs' },
+  { href: '#/candidate/practice', label: 'Practice', match: '/candidate/practice' },
   { href: '#/candidate/applications', label: 'My applications', match: '/candidate/applications' },
   { href: '#/candidate/interviews', label: 'Interviews', match: '/candidate/interviews' },
   { href: '#/candidate/profile', label: 'Profile', match: '/candidate/profile' },
@@ -123,7 +129,7 @@ function candidateShell(view) {
 
   return h('div', { class: 'portal' }, [
     h('header', { class: 'portal-bar' }, [
-      h('a', { class: 'brand', href: '#/candidate/jobs' }, [
+      h('a', { class: 'brand', href: '#/candidate/dashboard' }, [
         h('span', { class: 'mark', 'aria-hidden': 'true' }, [h('i'), h('i'), h('i'), h('i'), h('i')]),
         'HireIQ',
       ]),
@@ -162,6 +168,10 @@ define('/employer/jobs/new', requireRole('employer', () =>
   mount(employerShell(Employer.jobNew()), 'reg-control')));
 define('/employer/jobs/:id', requireRole('employer', (p) =>
   mount(employerShell(Employer.jobDetail(p)), 'reg-control')));
+define('/employer/jobs/:id/edit', requireRole('employer', (p) =>
+  mount(employerShell(Employer.jobEdit(p)), 'reg-control')));
+define('/employer/settings', requireRole('employer', () =>
+  mount(employerShell(Employer.settingsView()), 'reg-control')));
 define('/employer/monitor/:id', requireRole('employer', (p) =>
   mount(employerShell(Monitor.monitorView(p)), 'reg-control')));
 define('/employer/review/:id', requireRole('employer', (p) =>
@@ -174,6 +184,13 @@ define('/employer/candidates', requireRole('employer', () =>
 define('/employer/analytics', requireRole('employer', () =>
   mount(employerShell(comingSoon('Analytics',
     'Funnel conversion and score distribution per role. Needs completed interviews before it can show anything real — so it ships after Phase 5.')), 'reg-control')));
+
+define('/candidate/dashboard', requireRole('candidate', () =>
+  mount(candidateShell(Dashboard.dashboardView()), 'reg-calm')));
+define('/candidate/practice', requireRole('candidate', () =>
+  mount(candidateShell(Practice.practiceHub()), 'reg-calm')));
+define('/candidate/practice/:id/report', requireRole('candidate', (p) =>
+  mount(candidateShell(Practice.practiceReport(p)), 'reg-calm')));
 
 define('/candidate/jobs', requireRole('candidate', () =>
   mount(candidateShell(Candidate.jobBoard()), 'reg-calm')));
@@ -191,6 +208,19 @@ define('/candidate/profile', requireRole('candidate', () =>
 /* The room is full-bleed and runs in the control register — no portal chrome. */
 define('/candidate/interview/:id', requireRole('candidate', (p) =>
   mount(Interview.interviewGate(p), 'reg-control')));
+
+/* ------------------------------------------------------------- admin portal */
+define('/admin/login', () => mount(Admin.adminLogin(), 'reg-control'));
+define('/admin', requireRole('admin', () =>
+  mount(Admin.adminShell(Admin.overview()), 'reg-control')));
+define('/admin/employers', requireRole('admin', () =>
+  mount(Admin.adminShell(Admin.employersList()), 'reg-control')));
+define('/admin/candidates', requireRole('admin', () =>
+  mount(Admin.adminShell(Admin.candidatesList()), 'reg-control')));
+define('/admin/health', requireRole('admin', () =>
+  mount(Admin.adminShell(Admin.healthKpiView()), 'reg-control')));
+define('/admin/settings', requireRole('admin', () =>
+  mount(Admin.adminShell(Admin.adminSettings()), 'reg-control')));
 
 setNotFound(() => {
   setRegister('reg-control');
@@ -220,11 +250,15 @@ function comingSoon(title, body) {
   if (Store.isAuthed('candidate')) {
     refresh.push(Api.candidate.me().then((p) => Store.setProfile('candidate', p)).catch(() => {}));
   }
+  if (Store.isAuthed('admin')) {
+    refresh.push(Api.admin.me().then((p) => Store.setProfile('admin', p)).catch(() => {}));
+  }
   await Promise.all(refresh);
 
   if (!window.location.hash) {
     if (Store.isAuthed('employer')) window.location.replace('#/employer/jobs');
-    else if (Store.isAuthed('candidate')) window.location.replace('#/candidate/jobs');
+    else if (Store.isAuthed('candidate')) window.location.replace('#/candidate/dashboard');
+    else if (Store.isAuthed('admin')) window.location.replace('#/admin');
   }
 
   start();

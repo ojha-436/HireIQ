@@ -146,19 +146,40 @@ def _mean(xs: List[int]) -> float:
 
 
 def compute_overall(dim_scores: Dict[str, List[int]],
-                    unresolved_contradictions: int = 0) -> int:
+                    unresolved_contradictions: int = 0,
+                    weights: Optional[Dict[str, float]] = None) -> int:
     """The headline number, in Python, from stored per-dimension scores.
 
-    Each dimension is averaged first, then the dimensions are averaged — so a dimension
+    Each dimension is averaged first, then the dimensions are combined — so a dimension
     probed once counts the same as one probed five times. Without that, whichever topic
     happened to come up most would dominate the score.
+
+    `weights` (Phase 11): an optional `{dimension: weight}` map, e.g. from a pipeline
+    stage's `interview_config_json` or a practice session's chosen emphasis. Any dimension
+    missing from the map defaults to weight 1.0, so an unweighted call and a call with an
+    all-1.0 map are identical. Weighting never changes WHICH dimensions get scored — that
+    is still governed entirely by which personas were on the panel and what they probed.
     """
     if not dim_scores:
         return 0
-    means = [_mean(v) for v in dim_scores.values() if v]
+    means = {dim: _mean(v) for dim, v in dim_scores.items() if v}
     if not means:
         return 0
-    raw = 100.0 * _mean([int(round(m * 100)) / 100.0 for m in means]) / 5.0
+
+    if weights:
+        total_w = sum(max(0.0, weights.get(dim, 1.0)) for dim in means)
+        if total_w > 0:
+            raw = 100.0 * sum(
+                means[dim] * max(0.0, weights.get(dim, 1.0)) for dim in means
+            ) / total_w / 5.0
+        else:
+            raw = 0.0
+    else:
+        # Identical to the pre-weighting formula: round each dimension mean to 2dp
+        # before averaging, so this path is byte-for-byte unchanged for every caller
+        # that does not pass weights.
+        raw = 100.0 * _mean([int(round(m * 100)) / 100.0 for m in means.values()]) / 5.0
+
     penalty = min(_MAX_CONTRADICTION_PENALTY,
                   _CONTRADICTION_PENALTY * max(0, unresolved_contradictions))
     return int(max(0, min(100, round(raw - penalty))))
@@ -208,7 +229,8 @@ def _gemini_prose(*, job_title: str, dims: List[Dict[str, Any]],
 def build(*, turns: List[Dict[str, Any]], panel: List[str], job: Dict[str, Any],
           required_skill_ids: Optional[List[str]] = None,
           claims: Optional[List[Dict[str, str]]] = None,
-          duration_s: int = 0, use_gemini: bool = True) -> Dict[str, Any]:
+          duration_s: int = 0, use_gemini: bool = True,
+          weights: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
     """Assemble the assessment. `turns` are dicts with id/speaker/text/analysis_json."""
     by_id = {t["id"]: t for t in turns if t.get("id")}
     tally = _collect(turns)
@@ -232,7 +254,8 @@ def build(*, turns: List[Dict[str, Any]], panel: List[str], job: Dict[str, Any],
             "quotes": [(by_id[t].get("text") or "")[:QUOTE_CHARS] for t in kept],
         })
 
-    overall = compute_overall(dim_scores, unresolved_contradictions=len(contradictions))
+    overall = compute_overall(dim_scores, unresolved_contradictions=len(contradictions),
+                              weights=weights)
 
     per_dimension: List[Dict[str, Any]] = []
     for dim, vals in sorted(dim_scores.items(), key=lambda kv: -_mean(kv[1])):
@@ -332,6 +355,8 @@ def build(*, turns: List[Dict[str, Any]], panel: List[str], job: Dict[str, Any],
         },
         # Layer 4 of the AI disclosure — unconditional (plan-v3.md §5.5).
         "ai_disclosure": P.AI_DISCLOSURE,
+        # Phase 11 transparency: empty means every scored dimension counted equally.
+        "weights_applied": dict(weights or {}),
     }
     _assert_evidence_bound(report)
     return report, per_skill

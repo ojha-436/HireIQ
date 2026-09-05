@@ -8,7 +8,7 @@ from ..config import get_settings
 from ..db import get_db
 from ..deps import current_employer
 from ..models import Tenant, TenantUser
-from ..schemas import EmployerMe, EmployerRegister, LoginRequest, TokenResponse
+from ..schemas import EmployerMe, EmployerRegister, LoginRequest, PasswordChange, TokenResponse
 from ..security import hash_password, mint_token, verify_password
 
 router = APIRouter(prefix="/api/employer/auth", tags=["employer-auth"])
@@ -52,6 +52,10 @@ def login(body: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse:
     if user is None or not verify_password(body.password, user.password_hash):
         # Same message for both branches — don't leak which emails exist.
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Email or password is incorrect")
+    tenant = db.get(Tenant, user.tenant_id)
+    if tenant is not None and not tenant.active:
+        raise HTTPException(status.HTTP_403_FORBIDDEN,
+                            "This workspace has been suspended. Contact support.")
 
     return TokenResponse(
         token=mint_token(user.id, "employer", {"tid": user.tenant_id, "role": user.role}),
@@ -71,3 +75,16 @@ def me(user: TenantUser = Depends(current_employer), db: Session = Depends(get_d
         tenant_id=user.tenant_id,
         tenant_name=tenant.name if tenant else "",
     )
+
+
+@router.patch("/me/password")
+def change_password(
+    body: PasswordChange,
+    user: TenantUser = Depends(current_employer),
+    db: Session = Depends(get_db),
+) -> dict[str, bool]:
+    if not verify_password(body.current_password, user.password_hash):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Current password is incorrect")
+    user.password_hash = hash_password(body.new_password)
+    db.commit()
+    return {"ok": True}

@@ -145,6 +145,8 @@ class Candidate(TimestampMixin, Base):
     profile_sections_json: Mapped[dict] = mapped_column(JSON, default=dict)
     # Parsed resume: {filename, uploaded_at, chars, skills: [...], years: n}
     resume_meta_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    # Admin-managed suspension. A suspended candidate keeps their data but cannot log in.
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
 class JobApplication(TimestampMixin, Base):
@@ -309,3 +311,19 @@ class Notification(TimestampMixin, Base):
     kind: Mapped[str] = mapped_column(String(60))
     payload_json: Mapped[dict] = mapped_column(JSON, default=dict)
     read_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+# ============================================================ platform admin
+class AdminUser(TimestampMixin, Base):
+    """Platform operator. Separate audience from employer/candidate — see security.py.
+
+    Seeded once at startup (username 'admin', password 'admin@123') if the table is
+    empty; changeable via POST /api/admin/auth/me/password. Not self-registerable.
+    """
+
+    __tablename__ = "admin_users"
+    __table_args__ = (UniqueConstraint("username", name="uq_admin_username"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    username: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
