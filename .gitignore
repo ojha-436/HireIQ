@@ -38,3 +38,4 @@ dist/
 # The product tour is rebuilt from the capture + build scripts, not versioned.
 *.mp4
 *.webm
+.demo-video/
