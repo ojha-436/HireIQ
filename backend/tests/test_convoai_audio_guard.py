@@ -1,11 +1,17 @@
-"""When Agora ConvoAI is active, its per-persona agent is already speaking the turn's
-text into the Agora channel as a real participant (session.py's _convoai_speak, wired
-through _flush_persona_turn). Gemini's own native-audio output for that same turn used
-to be forwarded to the browser over the WebSocket regardless, so a candidate on the
-ConvoAI path would hear the line spoken twice, a beat apart, by two different TTS
-vendors. _pump()'s EV_AUDIO branch now suppresses the WebSocket emission while
-`_convoai` is set — turn bookkeeping (_open_persona_turn) still runs every time, only
-the redundant audio bytes are held back.
+"""Gemini's own native-audio output reaches the browser unconditionally, even when
+Agora ConvoAI is also active and speaking the same line into the Agora channel.
+
+This was NOT always true: a earlier pass suppressed Gemini's WebSocket audio whenever
+`_convoai` was set, on the theory that the candidate would hear the ConvoAI agent's
+voice over its own Agora-published track instead — avoiding two TTS vendors narrating
+the same line a beat apart. The first field test against real Gemini + real Agora
+credentials showed the opposite: the candidate heard NOTHING. The backend has no
+signal for whether the browser's Agora join/subscribe actually succeeded (real
+network/firewall/WebRTC conditions were never exercised before that test), so
+suppressing the one PROVEN, always-working audio path on the assumption that an
+unverified one had replaced it was the wrong trade — a silent interview is worse than
+one with an occasional doubled voice. Gemini's audio is unconditional again; see
+session.py `_pump`'s EV_AUDIO branch.
 """
 from __future__ import annotations
 
@@ -46,7 +52,10 @@ def test_gemini_audio_reaches_the_browser_when_convoai_is_not_active():
     rt.emit_audio.assert_awaited_once_with(b"\x01\x02")
 
 
-def test_gemini_audio_is_suppressed_when_convoai_is_speaking_the_same_line():
+def test_gemini_audio_also_reaches_the_browser_when_convoai_is_active():
+    """Regression: this used to assert the opposite (suppressed). It was reverted
+    because a real candidate on the ConvoAI path heard nothing at all -- see the
+    module docstring."""
     rt = _runtime()
     rt.floor.current = "tech"
     rt._convoai = True
@@ -54,13 +63,13 @@ def test_gemini_audio_is_suppressed_when_convoai_is_speaking_the_same_line():
 
     _run(rt._pump("tech", _OneShotAudioConnection()))
 
-    rt.emit_audio.assert_not_awaited()
+    rt.emit_audio.assert_awaited_once_with(b"\x01\x02")
 
 
-def test_turn_bookkeeping_still_runs_even_when_audio_is_suppressed():
-    """Only the WebSocket bytes are held back — _open_persona_turn (which flushes the
-    candidate's prior turn and marks the floor as genuinely speaking) is not a function
-    of which voice the candidate hears, and must not be skipped."""
+def test_turn_bookkeeping_runs_regardless_of_convoai_state():
+    """_open_persona_turn (which flushes the candidate's prior turn and marks the
+    floor as genuinely speaking) is not a function of which voice the candidate
+    hears, and must never be skipped."""
     rt = _runtime()
     rt.floor.current = "tech"
     rt._convoai = True

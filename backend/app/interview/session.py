@@ -1342,15 +1342,19 @@ class InterviewRuntime:
                     # Also suppress audio when employer has taken over (takeover_active=True).
                     if persona_key == self.floor.current and not self.takeover_active:
                         await self._open_persona_turn()
-                        # When Agora ConvoAI is active, that agent is already speaking this
-                        # same text into the Agora channel as a real participant (see
-                        # _flush_persona_turn's _convoai_speak call) — Gemini's own audio is
-                        # still generated (native-audio models produce audio and transcript
-                        # together, there is no text-only mode here) but sending it too would
-                        # double the candidate's TTS: two different vendors narrating the same
-                        # line a beat apart. Only one voice reaches the candidate.
-                        if not getattr(self, "_convoai", False):
-                            await self.emit_audio(ev["pcm"])
+                        # REVERTED: this used to also suppress Gemini's own audio whenever
+                        # _convoai was active, on the theory that the candidate would hear
+                        # the ConvoAI agent's voice over its own Agora-published track
+                        # instead. The first real-credentials field test showed the
+                        # opposite: the candidate heard NOTHING. The backend has no signal
+                        # for whether the browser's Agora join/subscribe actually succeeded
+                        # (network, firewall and WebRTC issues are all real and were never
+                        # exercised before this), so suppressing the one PROVEN, always-
+                        # working path on the assumption that an unverified one replaced it
+                        # was the wrong trade. Gemini's audio is unconditional again;
+                        # ConvoAI's Agora voice, if it also gets through, is a second voice
+                        # rather than the only one — worse than silence.
+                        await self.emit_audio(ev["pcm"])
 
                 elif kind == LC.EV_INPUT_TRANSCRIPT:
                     self._cand_buf.append(ev["text"])
