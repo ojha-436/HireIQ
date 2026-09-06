@@ -33,3 +33,9 @@ Thumbs.db
 # ---- build ----
 node_modules/
 dist/
+
+# ---- demo footage: tens of MB of binary git would carry for ever ----
+# The product tour is rebuilt from the capture + build scripts, not versioned.
+*.mp4
+*.webm
+.demo-video/
