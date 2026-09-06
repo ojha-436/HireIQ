@@ -4,7 +4,7 @@
 !.env.example
 *.pem
 *.key
-key_and_secret.txt
+key_and_secret*.txt
 
 # ---- python ----
 .venv/
