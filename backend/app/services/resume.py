@@ -156,14 +156,63 @@ def _blocks(lines: list[str]) -> list[list[str]]:
     return blocks
 
 
-def _split_head(head: str) -> tuple[str, str, str]:
-    """'Senior Engineer — Acme Corp (2021-2023)' -> ('Senior Engineer', 'Acme Corp', dates)."""
+#: Words that identify the academic half of an education line, so "NIAMT, B.Tech" and
+#: "B.Tech, NIAMT" both land the right way round.
+_DEGREE_WORDS = ("bachelor", "master", "b.tech", "btech", "b.e", "m.tech", "mtech",
+                 "b.sc", "bsc", "m.sc", "msc", "mba", "phd", "diploma", "b.a", "m.a",
+                 "b.com", "m.com", "degree", "engineering", "science")
+
+
+def _looks_like(text: str, words: tuple) -> bool:
+    """Whole-word match only.
+
+    Substring matching read "Premnath Engineering Works" as a job title, because
+    "engineering" contains "engineer" — so the company stayed in the title field and
+    the swap that was supposed to fix the order never fired.
+    """
+    low = text.lower()
+    # Boundaries at BOTH ends: anchoring only the start still matched "engineer"
+    # inside "engineering", which is the very case this is meant to tell apart.
+    # The optional plural keeps "engineers"/"managers" matching.
+    return any(re.search(r"\b{}s?\b".format(re.escape(w.strip())), low) for w in words)
+
+
+def _strip_edges(text: str) -> str:
+    """Trim separator punctuation without amputating a trailing bracket.
+
+    A blanket .strip('()') turned "…Technology (NIAMT)" into "…Technology (NIAMT" —
+    an unbalanced string that then went straight into the profile and, from there, into
+    what an interviewer reads aloud. Only drop a bracket when it is unmatched.
+    """
+    out = text.strip(" ,.;:-–—|")
+    # An unmatched bracket at either end is debris from splitting a line, most often
+    # the "(" left behind when the date range inside it was consumed.
+    while out.endswith(")") and out.count("(") < out.count(")"):
+        out = out[:-1].strip(" ,.;:-–—|")
+    while out.endswith("(") and out.count("(") > out.count(")"):
+        out = out[:-1].strip(" ,.;:-–—|")
+    while out.startswith("(") and out.count("(") > out.count(")"):
+        out = out[1:].strip(" ,.;:-–—|")
+    return out
+
+
+def _split_head(head: str, prefer: tuple = ()) -> tuple[str, str, str]:
+    """'Senior Engineer — Acme Corp (2021-2023)' -> ('Senior Engineer', 'Acme Corp', dates).
+
+    `prefer` names the vocabulary the FIRST returned field should look like. Résumés
+    are written both ways round — "Acme Corp | Senior Engineer" is as common as the
+    reverse — and assuming one order silently filed a company name as a job title and
+    a job title as the employer. That lands in the interview grounding, where an
+    interviewer then asks the candidate about their time at "Design / R&D Engineer".
+    """
     m = _DATE_RANGE.search(head)
     dates = m.group(0) if m else ""
-    rest = (head[: m.start()] if m else head).strip(" ,.-–—|()")
+    rest = _strip_edges(head[: m.start()] if m else head)
     parts = re.split(r"\s+[-|–—@]\s+|,\s+", rest, maxsplit=1)
-    first = parts[0].strip()
-    second = parts[1].strip() if len(parts) > 1 else ""
+    first = _strip_edges(parts[0])
+    second = _strip_edges(parts[1]) if len(parts) > 1 else ""
+    if prefer and second and _looks_like(second, prefer) and not _looks_like(first, prefer):
+        first, second = second, first
     return first, second, dates
 
 
@@ -181,7 +230,7 @@ def _guess_headline(header_lines: list[str]) -> str:
 def _guess_experience(lines: list[str], limit: int = 6) -> list[dict[str, str]]:
     out = []
     for block in _blocks(lines)[:limit]:
-        title, org, dates = _split_head(block[0])
+        title, org, dates = _split_head(block[0], prefer=_TITLE_WORDS)
         if not title:
             continue
         out.append({"title": title[:120], "org": org[:120], "dates": dates[:40],
@@ -192,7 +241,7 @@ def _guess_experience(lines: list[str], limit: int = 6) -> list[dict[str, str]]:
 def _guess_education(lines: list[str], limit: int = 3) -> list[dict[str, str]]:
     out = []
     for block in _blocks(lines)[:limit]:
-        degree, org, dates = _split_head(block[0])
+        degree, org, dates = _split_head(block[0], prefer=_DEGREE_WORDS)
         if not degree:
             continue
         out.append({"degree": degree[:120], "org": org[:120], "dates": dates[:40]})

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from ..config import get_settings
 from ..db import get_db
@@ -17,6 +20,8 @@ from ..schemas import (
     ResumeParsed,
     TokenResponse,
 )
+from ..services.profile_merge import (apply_manual_edit, merge_resume,
+                                      public_sections)
 from ..services.resume import ResumeError, parse_resume
 from ..security import hash_password, mint_token, verify_password
 
@@ -69,7 +74,7 @@ def _me(cand: Candidate) -> CandidateMe:
         phone=cand.phone,
         country=cand.country,
         years_experience=cand.years_experience,
-        profile_sections_json=cand.profile_sections_json or {},
+        profile_sections_json=public_sections(cand.profile_sections_json or {}),
         resume_meta_json=cand.resume_meta_json or {},
     )
 
@@ -94,7 +99,10 @@ def update_me(
     if body.years_experience is not None:
         cand.years_experience = body.years_experience
     if body.profile_sections_json is not None:
-        cand.profile_sections_json = body.profile_sections_json
+        # Not a straight assignment: the UI does not know about provenance, so a plain
+        # save would drop it and the next résumé upload would believe it owned nothing.
+        cand.profile_sections_json = apply_manual_edit(
+            cand.profile_sections_json or {}, body.profile_sections_json)
     db.commit()
     db.refresh(cand)
     return _me(cand)
@@ -110,12 +118,15 @@ async def upload_resume(
     cand: Candidate = Depends(current_candidate),
     db: Session = Depends(get_db),
 ) -> ResumeParsed:
-    """Parse a resume into a full profile draft, and fold it into the candidate's profile.
+    """Parse a résumé into a profile draft and fold it into the candidate's profile.
 
-    The extracted text is NOT stored — only what's derived from it. Skills merge as
-    before. Headline/summary/experience/education/projects merge additively: anything
-    the candidate already typed by hand always wins, so a re-upload can only ADD to a
-    profile, never silently overwrite what someone wrote themselves.
+    The extracted text is NOT stored — only what is derived from it.
+
+    A re-upload REPLACES what the previous résumé contributed and leaves anything the
+    candidate typed by hand alone (see services/profile_merge). The earlier additive
+    merge meant a replacement CV changed nothing that already had a value, so the
+    profile kept a stale headline and accumulated two careers' worth of skills — which
+    also froze every job match score, since those are computed from profile skills.
     """
     blob = await file.read()
     try:
@@ -123,50 +134,13 @@ async def upload_resume(
     except ResumeError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
 
-    profile = parsed.get("profile") or {}
-    sections = dict(cand.profile_sections_json or {})
-
-    sections["skills"] = list(dict.fromkeys([*(sections.get("skills") or []), *parsed["skills"]]))
-
-    summary_drafted = False
-    if not str(sections.get("headline") or "").strip() and profile.get("headline"):
-        sections["headline"] = profile["headline"]
-    if not str(sections.get("summary") or "").strip() and profile.get("summary"):
-        sections["summary"] = profile["summary"]
-        summary_drafted = True
-
-    experience = list(sections.get("experience") or [])
-    seen = {_dedup_key(e, "title", "org") for e in experience}
-    added_exp = 0
-    for item in profile.get("experience") or []:
-        key = _dedup_key(item, "title", "org")
-        if key not in seen and key != ("", ""):
-            experience.append(item)
-            seen.add(key)
-            added_exp += 1
-    sections["experience"] = experience[:8]
-
-    education = list(sections.get("education") or [])
-    seen_edu = {_dedup_key(e, "degree", "org") for e in education}
-    added_edu = 0
-    for item in profile.get("education") or []:
-        key = _dedup_key(item, "degree", "org")
-        if key not in seen_edu and key != ("", ""):
-            education.append(item)
-            seen_edu.add(key)
-            added_edu += 1
-    sections["education"] = education[:5]
-
-    projects = list(sections.get("projects") or [])
-    seen_proj = {_dedup_key(p, "title") for p in projects}
-    added_proj = 0
-    for item in profile.get("projects") or []:
-        key = _dedup_key(item, "title")
-        if key not in seen_proj and key != ("",):
-            projects.append(item)
-            seen_proj.add(key)
-            added_proj += 1
-    sections["projects"] = projects[:6]
+    sections, report = merge_resume(
+        cand.profile_sections_json or {},
+        parsed.get("profile") or {},
+        parsed["skills"],
+        filename=parsed["filename"],
+        prior_resume_skills=(cand.resume_meta_json or {}).get("skills") or [],
+    )
 
     cand.profile_sections_json = sections
     if parsed["years"] is not None:
@@ -176,16 +150,25 @@ async def upload_resume(
         "chars": parsed["chars"],
         "skills": parsed["skills"],
         "years": parsed["years"],
-        "uploaded_at": __import__("datetime").datetime.now(
-            __import__("datetime").timezone.utc).isoformat(),
+        "uploaded_at": datetime.now(timezone.utc).isoformat(),
     }
+    # SQLAlchemy does not see in-place mutation of a JSON column; both are reassigned
+    # above, but the profile dict is derived from the old one and can share identity.
+    flag_modified(cand, "profile_sections_json")
     db.commit()
 
     return ResumeParsed(
         filename=parsed["filename"], skills=parsed["skills"],
         years_experience=parsed["years"], chars=parsed["chars"],
-        headline=sections.get("headline") or "", summary_drafted=summary_drafted,
-        experience_added=added_exp, education_added=added_edu, projects_added=added_proj,
+        headline=sections.get("headline") or "",
+        summary_drafted="summary" in report["filled"],
+        experience_added=report["added"]["experience"],
+        education_added=report["added"]["education"],
+        projects_added=report["added"]["projects"],
+        replaced_fields=report["replaced"],
+        kept_manual_fields=report["kept_manual"],
+        entries_replaced=sum(report["removed"].values()),
+        skills_unreadable=report["skills_unreadable"],
     )
 
 

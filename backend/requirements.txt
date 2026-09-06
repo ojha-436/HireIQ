@@ -11,3 +11,5 @@ google-genai>=2.22.0
 pytest==8.3.4
 pytest-asyncio==0.25.0
 pypdf==5.1.0
+# Postgres driver for Cloud SQL. Binary wheel: no libpq needed in the image.
+psycopg[binary]==3.2.3

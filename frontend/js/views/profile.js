@@ -182,12 +182,33 @@ function render(me, onReload) {
     importNote.textContent = '';
     try {
       const parsed = await Api.candidate.uploadResume(file);
+      // Say what actually changed. A replacement CV that silently appears to do
+      // nothing is the single most confusing outcome here, so the counts, the
+      // replacements and the fields deliberately left alone are all reported.
       const drafted = [];
-      if (parsed.headline) drafted.push('a headline');
-      if (parsed.summary_drafted) drafted.push('a summary');
       if (parsed.experience_added) drafted.push(`${parsed.experience_added} role${parsed.experience_added === 1 ? '' : 's'}`);
       if (parsed.education_added) drafted.push(`${parsed.education_added} education entr${parsed.education_added === 1 ? 'y' : 'ies'}`);
-      toast(`Found ${parsed.skills.length} skills` + (drafted.length ? ` and drafted ${drafted.join(', ')}` : '') + '. Review below.');
+      if (parsed.projects_added) drafted.push(`${parsed.projects_added} project${parsed.projects_added === 1 ? '' : 's'}`);
+
+      const bits = [];
+      if (parsed.replaced_fields?.length) bits.push(`replaced your ${parsed.replaced_fields.join(' and ')}`);
+      if (drafted.length) bits.push(`added ${drafted.join(', ')}`);
+      if (!parsed.skills_unreadable) bits.push(`${parsed.skills.length} skill${parsed.skills.length === 1 ? '' : 's'}`);
+      toast(bits.length ? `Imported: ${bits.join(', ')}. Review below.`
+                        : 'Imported. Nothing on your profile needed to change.');
+
+      // Two things the candidate must be told rather than left to discover. These go
+      // through toast(), not the inline note: onReload() below rebuilds this whole
+      // view, so anything written into the form is gone before it can be read.
+      if (parsed.skills_unreadable) {
+        toast('We could not read any skills from that file, so your existing skills '
+          + 'were kept rather than cleared. Check them by hand — your job match scores '
+          + 'are calculated from this list.', 'err');
+      }
+      if (parsed.kept_manual_fields?.length) {
+        toast(`Your ${parsed.kept_manual_fields.join(' and ')} stayed as you wrote it. `
+          + 'Clear the field and import again to take this resume\'s version.');
+      }
       Store.setProfile('candidate', await Api.candidate.me());
       await onReload();
     } catch (err) {
@@ -278,7 +299,7 @@ function render(me, onReload) {
       h('aside', { class: 'col gap5 aside-sticky' }, [
         h('div', { class: 'card card-pad col gap4' }, [
           h('h3', { class: 'filter-title', text: 'Import from resume' }),
-          h('p', { class: 'hint', text: 'PDF or plain text, up to 5 MB. We draft a headline, summary, experience and education straight from it — nothing already on your profile is overwritten, and the resume text itself is not stored.' }),
+          h('p', { class: 'hint', text: 'PDF or plain text, up to 5 MB. Importing again replaces whatever your last resume put on this profile, and leaves anything you typed yourself untouched. The resume text itself is not stored.' }),
           importBtn, fileInput, importNote,
           me.resume_meta_json?.filename
             ? h('p', { class: 'fs11 t3', text: `Last imported: ${me.resume_meta_json.filename}` })

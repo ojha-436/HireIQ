@@ -111,29 +111,45 @@ class _GeminiLiveConnection(LiveConnection):
             return
 
     async def events(self) -> AsyncIterator[Dict[str, Any]]:
+        """Yield every event for the LIFE of the connection, not just one turn.
+
+        `session.receive()` is per-TURN: the SDK's generator returns as soon as the
+        model finishes a turn. Iterating it once meant the pump task exited after the
+        opening question, so nothing was ever read from the socket again — no candidate
+        input transcript, no further model audio, and the interview sat on "Listening"
+        for ever while the socket died of a keepalive timeout. Re-enter it until the
+        connection is actually closed.
+        """
         try:
-            async for msg in self._session.receive():
-                sc = getattr(msg, "server_content", None)
-                if sc is None:
-                    continue
-                it = getattr(sc, "input_transcription", None)
-                if it is not None and getattr(it, "text", None):
-                    yield {"type": EV_INPUT_TRANSCRIPT, "text": it.text}
-                ot = getattr(sc, "output_transcription", None)
-                if ot is not None and getattr(ot, "text", None):
-                    yield {"type": EV_OUTPUT_TRANSCRIPT, "text": ot.text}
-                mt = getattr(sc, "model_turn", None)
-                if mt is not None:
-                    for part in (getattr(mt, "parts", None) or []):
-                        blob = getattr(part, "inline_data", None)
-                        if blob is not None and getattr(blob, "data", None):
-                            yield {"type": EV_AUDIO, "pcm": blob.data}
-                        elif getattr(part, "text", None):
-                            yield {"type": EV_OUTPUT_TRANSCRIPT, "text": part.text}
-                if getattr(sc, "interrupted", False):
-                    yield {"type": EV_INTERRUPTED}
-                if getattr(sc, "turn_complete", False):
-                    yield {"type": EV_TURN_COMPLETE}
+            while not self._closed:
+                produced = False
+                async for msg in self._session.receive():
+                    produced = True
+                    sc = getattr(msg, "server_content", None)
+                    if sc is None:
+                        continue
+                    it = getattr(sc, "input_transcription", None)
+                    if it is not None and getattr(it, "text", None):
+                        yield {"type": EV_INPUT_TRANSCRIPT, "text": it.text}
+                    ot = getattr(sc, "output_transcription", None)
+                    if ot is not None and getattr(ot, "text", None):
+                        yield {"type": EV_OUTPUT_TRANSCRIPT, "text": ot.text}
+                    mt = getattr(sc, "model_turn", None)
+                    if mt is not None:
+                        for part in (getattr(mt, "parts", None) or []):
+                            blob = getattr(part, "inline_data", None)
+                            if blob is not None and getattr(blob, "data", None):
+                                yield {"type": EV_AUDIO, "pcm": blob.data}
+                            elif getattr(part, "text", None):
+                                yield {"type": EV_OUTPUT_TRANSCRIPT, "text": part.text}
+                    if getattr(sc, "interrupted", False):
+                        yield {"type": EV_INTERRUPTED}
+                    if getattr(sc, "turn_complete", False):
+                        yield {"type": EV_TURN_COMPLETE}
+                if not produced:
+                    # receive() returned without a single message: idle socket. Yield to
+                    # the loop so re-entering cannot spin at 100% CPU.
+                    await asyncio.sleep(0.05)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - surface upstream failures as events
