@@ -156,6 +156,12 @@ export const Api = {
     },
 
     changePassword: (body) => patch('/api/candidate/auth/me/password', { role: 'candidate', body }),
+
+    notifications: {
+      list: () => get('/api/candidate/me/notifications', { role: 'candidate' }),
+      markRead: (id) => post(`/api/candidate/me/notifications/${id}/read`, { role: 'candidate' }),
+      markAllRead: () => post('/api/candidate/me/notifications/read-all', { role: 'candidate' }),
+    },
   },
 
   admin: {

@@ -13,7 +13,7 @@ from .config import get_settings
 from .db import Base, SessionLocal, engine, run_light_migrations
 from .models import AdminUser
 from .routers import (admin, candidate_auth, candidate_jobs, employer_auth,
-                      employer_jobs, interview, practice)
+                      employer_jobs, interview, notifications, practice)
 from .security import hash_password
 
 settings = get_settings()
@@ -116,6 +116,7 @@ app.include_router(candidate_jobs.router)
 app.include_router(interview.router)
 app.include_router(practice.router)
 app.include_router(admin.router)
+app.include_router(notifications.router)
 
 
 @app.get("/api/health", tags=["meta"])
@@ -140,6 +141,22 @@ def _find_frontend() -> Path | None:
     return None
 
 
+class _RevalidateStaticFiles(StaticFiles):
+    """No build step means no hashed filenames, which means no safe long-lived cache.
+
+    Without an explicit header, browsers fall back to heuristic caching from
+    `Last-Modified` alone and can keep serving a stale JS/CSS file across full page
+    reloads with no network request at all — a real footgun during active
+    development, and just as real right after a production deploy. `no-cache` still
+    lets ETag/Last-Modified 304 cheaply; it only forbids skipping the check.
+    """
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 _FRONTEND = _find_frontend()
 if _FRONTEND is not None:
-    app.mount("/", StaticFiles(directory=str(_FRONTEND), html=True), name="spa")
+    app.mount("/", _RevalidateStaticFiles(directory=str(_FRONTEND), html=True), name="spa")

@@ -11,7 +11,6 @@ from datetime import datetime, timezone
 from sqlalchemy import (
     JSON,
     Boolean,
-    DateTime,
     ForeignKey,
     Integer,
     String,
@@ -20,7 +19,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from .db import Base
+from .db import Base, UTCDateTime
 
 
 def utcnow() -> datetime:
@@ -38,7 +37,7 @@ def new_id() -> str:
 
 
 class TimestampMixin:
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
 
 
 # ============================================================ employer side (tenant-scoped)
@@ -89,8 +88,8 @@ class JobPosting(TimestampMixin, Base):
     max_experience_years: Mapped[int | None] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(String(20), default="draft", index=True)  # draft|open|paused|closed
     blind_screening_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
-    published_at: Mapped[datetime | None] = mapped_column(DateTime)
-    closes_at: Mapped[datetime | None] = mapped_column(DateTime)
+    published_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    closes_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
     tenant: Mapped[Tenant] = relationship(back_populates="jobs")
     stages: Mapped[list["PipelineStage"]] = relationship(
@@ -159,8 +158,8 @@ class JobApplication(TimestampMixin, Base):
     tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), index=True)  # denormalised
     current_stage_id: Mapped[int | None] = mapped_column(ForeignKey("pipeline_stages.id"))
     status: Mapped[str] = mapped_column(String(30), default="applied", index=True)
-    applied_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
-    last_activity_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    applied_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    last_activity_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     decision_reason: Mapped[str | None] = mapped_column(Text)
     identity_revealed: Mapped[bool] = mapped_column(Boolean, default=False)
 
@@ -187,18 +186,18 @@ class InterviewSession(TimestampMixin, Base):
     status: Mapped[str] = mapped_column(String(20), default="setup", index=True)
 
     # Legally required: the session cannot go live while this is NULL.
-    disclosure_accepted_at: Mapped[datetime | None] = mapped_column(DateTime)
+    disclosure_accepted_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
     state_json: Mapped[dict] = mapped_column(JSON, default=dict)  # serialised CandidateContext
-    started_at: Mapped[datetime | None] = mapped_column(DateTime)
-    ended_at: Mapped[datetime | None] = mapped_column(DateTime)
+    started_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    ended_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     duration_s: Mapped[int] = mapped_column(Integer, default=0)
 
     # Agora Cloud Recording (deferred; nullable so sessions without it are unaffected)
     recording_gcs_uri: Mapped[str | None] = mapped_column(String(400))
     recording_agora_sid: Mapped[str | None] = mapped_column(String(120))
     recording_agora_resource_id: Mapped[str | None] = mapped_column(String(200))
-    recording_started_at: Mapped[datetime | None] = mapped_column(DateTime)
+    recording_started_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
     turns: Mapped[list["InterviewTurn"]] = relationship(
         back_populates="session", cascade="all, delete-orphan", order_by="InterviewTurn.seq")
@@ -225,7 +224,7 @@ class InterviewTurn(Base):
     rule_fired: Mapped[str | None] = mapped_column(String(16))
     question_source: Mapped[str | None] = mapped_column(String(20))
     difficulty_at_turn: Mapped[int | None] = mapped_column(Integer)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, index=True)
 
     session: Mapped[InterviewSession] = relationship(back_populates="turns")
 
@@ -246,7 +245,7 @@ class InterviewAssessment(TimestampMixin, Base):
     per_skill_json: Mapped[dict] = mapped_column(JSON, default=dict)
     difficulty_trajectory_json: Mapped[list] = mapped_column(JSON, default=list)
     released_to_candidate: Mapped[bool] = mapped_column(Boolean, default=False)
-    released_at: Mapped[datetime | None] = mapped_column(DateTime)
+    released_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
     session: Mapped[InterviewSession] = relationship(back_populates="assessment")
 
@@ -310,7 +309,7 @@ class Notification(TimestampMixin, Base):
     recipient_id: Mapped[int] = mapped_column(Integer, index=True)
     kind: Mapped[str] = mapped_column(String(60))
     payload_json: Mapped[dict] = mapped_column(JSON, default=dict)
-    read_at: Mapped[datetime | None] = mapped_column(DateTime)
+    read_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
 
 # ============================================================ platform admin

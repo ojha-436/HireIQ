@@ -63,6 +63,7 @@ export function jobBoard() {
       const body = await Api.candidate.browseJobs(query());
       renderFilters(body);
       renderSummary(body);
+      updateHero(body);
       clear(results).append(
         body.jobs.length
           ? h('div', { class: 'job-grid stagger' }, body.jobs.map(jobCard))
@@ -236,10 +237,31 @@ export function jobBoard() {
     );
   }
 
+  const heroLede = h('p', { class: 'lede', text: 'Loading open roles…' });
+
   load();
 
   return h('div', {}, [
-    head('Open roles', 'Every role below runs an AI panel interview as part of its process. You will be told before it starts.'),
+    h('nav', { class: 'crumbs', 'aria-label': 'Breadcrumb', style: { marginBottom: 'var(--s5)' } }, [
+      h('a', { href: '#/candidate/dashboard', text: 'Home' }),
+      h('span', { class: 'sep', text: '/' }),
+      h('strong', { text: 'Open roles' }),
+    ]),
+
+    h('div', { class: 'board-hero' }, [
+      h('span', { class: 'live-badge' }, [h('span', { class: 'dot', 'aria-hidden': 'true' }), 'Live roles']),
+      h('h1', { class: 'display', text: 'Open roles' }),
+      heroLede,
+      h('div', { class: 'hero-actions' }, [
+        h('a', { class: 'btn btn-primary btn-lg', href: '#/candidate/profile' }, [
+          h('span', { html: icon('user', 15) }), 'Complete your profile',
+        ]),
+        h('a', { class: 'btn btn-lg', href: '#/candidate/practice' }, [
+          h('span', { html: icon('mic', 15) }), 'Practice for a role',
+        ]),
+      ]),
+    ]),
+
     h('div', { class: 'board' }, [
       filters,
       h('div', { class: 'board-main' }, [
@@ -249,43 +271,74 @@ export function jobBoard() {
       ]),
     ]),
   ]);
+
+  function updateHero(body) {
+    const n = body.facets.total_open;
+    clear(heroLede).append(
+      h('strong', { text: `${n} live role${n === 1 ? '' : 's'}.` }),
+      ' Every one runs an AI panel interview as part of its process, and shows your match % the moment your profile has skills on file.',
+    );
+  }
 }
 
 function jobCard(job) {
-  return h('a', { class: 'card card-link job-card col gap4', href: `#/candidate/jobs/${job.id}` }, [
-    h('div', { class: 'col gap2' }, [
-      h('span', { class: 'fs12 t3 row gap2' }, [h('span', { html: icon('building', 13) }), job.company_name]),
-      h('h2', { class: 'display', text: job.title }),
+  const applyBtn = h('button', {
+    class: 'btn btn-primary btn-sm', type: 'button',
+    disabled: job.already_applied || null,
+    text: job.already_applied ? 'Applied' : 'Apply',
+    onClick: async (e) => {
+      e.preventDefault();
+      applyBtn.disabled = true;
+      applyBtn.replaceChildren(h('span', { class: 'spin' }), 'Applying…');
+      try {
+        await Api.candidate.apply(job.id);
+        toast('Applied. Track it under My applications.');
+        applyBtn.disabled = true;
+        applyBtn.replaceChildren('Applied');
+      } catch (err) {
+        toast(err.message, 'err');
+        applyBtn.disabled = false;
+        applyBtn.replaceChildren('Apply');
+      }
+    },
+  });
+
+  return h('div', { class: 'job-card-v2' }, [
+    h('div', { class: 'jc-head' }, [
+      h('span', { class: 'jc-logo', 'aria-hidden': 'true', text: (job.company_name || '?').slice(0, 2).toUpperCase() }),
+      h('div', { class: 'col gap1 grow', style: { minWidth: 0 } }, [
+        h('a', { class: 'jc-title', href: `#/candidate/jobs/${job.id}` }, [
+          h('h2', { class: 'display', text: job.title }),
+        ]),
+        h('span', { class: 'fs12 t3', text: job.company_name }),
+      ]),
+      h('span', { class: 'fs11 t3', style: { whiteSpace: 'nowrap' },
+        text: job.published_at ? `Posted ${fmtDate(job.published_at)}` : 'Recently posted' }),
     ]),
-    h('div', { class: 'job-meta' }, [
-      job.location && h('span', {}, [h('span', { html: icon('pin', 13) }), job.location]),
-      // Skip the work-mode chip when the location already says the same thing
-      // ("Remote · Remote" reads like a bug).
-      job.remote_mode && (job.location || '').toLowerCase() !== job.remote_mode
-        ? h('span', {}, [h('span', { html: icon('globe', 13) }),
-            REMOTE_LABEL[job.remote_mode] || job.remote_mode])
+
+    h('div', { class: 'row wrap gap2' }, [
+      // Match is a claim about fit, so it always says what it is based on.
+      job.match_pct !== null && job.match_pct !== undefined
+        ? h('span', { class: 'chip', style: { color: 'var(--accent)',
+            borderColor: 'color-mix(in srgb, var(--accent) 45%, transparent)' },
+            text: `${job.match_pct}% match` })
         : null,
-      expLabel(job) && h('span', {}, [h('span', { html: icon('clock', 13) }), expLabel(job)]),
+      job.remote_mode ? h('span', { class: 'chip', text: REMOTE_LABEL[job.remote_mode] || job.remote_mode }) : null,
+      h('span', { class: 'chip', text: EMPLOYMENT_LABEL[job.employment_type] || job.employment_type }),
+      job.location ? h('span', { class: 'chip', text: job.location }) : null,
+      expLabel(job) ? h('span', { class: 'chip', text: expLabel(job) }) : null,
     ]),
-    // Match is a claim about fit, so it always shows what it is based on.
-    job.match_pct !== null && job.match_pct !== undefined
-      ? h('div', { class: 'match' }, [
-          h('div', { class: 'match-bar', 'aria-hidden': 'true' },
-            [h('i', { style: { width: `${job.match_pct}%` } })]),
-          h('span', { class: 'fs12 mono t2', text: `${job.match_pct}% skills match` }),
-          job.missing_skills.length
-            ? h('span', { class: 'fs11 t3', text: `· missing ${job.missing_skills.slice(0, 3).join(', ')}` })
-            : null,
-        ])
-      : null,
+
+    job.jd_text ? h('p', { class: 'snippet', text: job.jd_text.trim() }) : null,
+
     (job.required_skills_json || []).length
-      ? h('div', { class: 'skills' }, job.required_skills_json.slice(0, 5).map((s) => h('span', { class: 'chip', text: s })))
+      ? h('div', { class: 'row wrap gap2' },
+          job.required_skills_json.slice(0, 4).map((s) => h('span', { class: 'chip chip-mono', text: s })))
       : null,
-    h('div', { class: 'row-between', style: { marginTop: 'auto', paddingTop: 'var(--s2)' } }, [
-      job.already_applied
-        ? h('span', { class: 'status status-applied', text: 'Applied' })
-        : h('span', { class: 'fs12 t3', text: job.published_at ? `Posted ${fmtDate(job.published_at)}` : 'Recently posted' }),
-      h('span', { class: 't3', html: icon('arrowRight', 16) }),
+
+    h('div', { class: 'jc-actions' }, [
+      applyBtn,
+      h('a', { class: 'btn btn-sm', href: `#/candidate/jobs/${job.id}`, text: 'View role' }),
     ]),
   ]);
 }

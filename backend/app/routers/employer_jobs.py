@@ -8,7 +8,8 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..deps import current_employer
-from ..models import AuditLog, Candidate, JobApplication, JobPosting, PipelineStage, TenantUser
+from ..models import (AuditLog, Candidate, InterviewAssessment, InterviewSession,
+                      JobApplication, JobPosting, PipelineStage, TenantUser)
 from ..schemas import (
     ApplicantOut,
     JobCreate,
@@ -294,6 +295,20 @@ def list_applications(
         .order_by(JobApplication.applied_at.desc())
     ).all()
 
+    # The most recent assessment per application — what "select the best candidate"
+    # actually needs: a score visible across the whole list, not one review at a time.
+    # A multi-stage pipeline can produce more than one assessment per application, so
+    # this is deliberately the LATEST one (current standing), not an average.
+    latest_by_app: dict[int, InterviewAssessment] = {}
+    assessed = db.execute(
+        select(InterviewAssessment, InterviewSession.job_application_id)
+        .join(InterviewSession, InterviewSession.id == InterviewAssessment.session_id)
+        .where(InterviewSession.job_application_id.in_([app.id for app, _ in rows]))
+        .order_by(InterviewAssessment.created_at.asc())
+    ).all()
+    for assess_row, app_id in assessed:
+        latest_by_app[app_id] = assess_row   # ascending order: last write wins = latest
+
     return [
         ApplicantOut(
             id=app.id,
@@ -304,6 +319,8 @@ def list_applications(
             status=app.status,
             current_stage_id=app.current_stage_id,
             applied_at=app.applied_at,
+            overall=(latest_by_app[app.id].overall if app.id in latest_by_app else None),
+            recommendation=(latest_by_app[app.id].recommendation if app.id in latest_by_app else None),
         )
         for app, cand in rows
     ]

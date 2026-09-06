@@ -9,7 +9,7 @@
 import { Api } from './api.js';
 import { define, go, path, setNotFound, start } from './router.js';
 import { Store } from './store.js';
-import { clear, empty, h, icon, initials, themeToggle } from './ui.js';
+import { clear, empty, h, icon, initials, relTime, themeToggle } from './ui.js';
 import './theme.js';   // applies the stored/system theme before first paint
 import * as Auth from './views/auth.js';
 import * as Employer from './views/employer.js';
@@ -123,9 +123,117 @@ const CANDIDATE_NAV = [
   { href: '#/candidate/profile', label: 'Profile', match: '/candidate/profile' },
 ];
 
+/* Built once and reused across every route change — candidateShell() is called on
+   every navigation, and a fresh `document` click-listener per call would leak one
+   more forever. Re-inserting the same node into a new parent just moves it (DOM
+   nodes are singly-parented), so this is safe. */
+let _notifBell = null;
+
+function notificationText(n) {
+  const p = n.payload || {};
+  switch (n.kind) {
+    case 'interview_ready':
+      return `Your AI panel interview for ${p.job_title || 'a role'} is ready — join when you're ready.`;
+    case 'feedback_released':
+      return `Feedback is ready for ${p.job_title || 'your application'}.`;
+    case 'application_decision':
+      if (p.status === 'rejected') return `An update on your application to ${p.job_title || 'a role'}.`;
+      if (p.status === 'offer') return `You've reached the offer stage for ${p.job_title || 'your application'}.`;
+      if (p.moved_to) return `You moved to ${p.moved_to} for ${p.job_title || 'your application'}.`;
+      return `Your application to ${p.job_title || 'a role'} was updated.`;
+    default:
+      return (n.kind || 'Update').replace(/_/g, ' ');
+  }
+}
+
+function notificationHref(n) {
+  const p = n.payload || {};
+  if (n.kind === 'interview_ready' && p.session_id) return `#/candidate/interview/${p.session_id}`;
+  if (p.application_id) return `#/candidate/applications/${p.application_id}`;
+  return '#/candidate/applications';
+}
+
+function notificationBell() {
+  if (_notifBell) return _notifBell;
+
+  const badge = h('span', { class: 'notif-badge', hidden: true });
+  const panel = h('div', { class: 'notif-panel', hidden: true, role: 'menu', 'aria-label': 'Notifications' });
+  // Appended to <body>, not to the nav: .portal-bar/.sidebar use backdrop-filter for
+  // the frosted-glass look, and any CSS filter silently clips absolutely-positioned
+  // descendants to the filtered element's own box — the dropdown would exist, pass
+  // every "is it visible" check, and never actually paint. Fixed-position + a body
+  // append is the standard escape hatch.
+  document.body.append(panel);
+
+  function position() {
+    const r = btn.getBoundingClientRect();
+    panel.style.top = `${Math.round(r.bottom + 8)}px`;
+    panel.style.right = `${Math.round(window.innerWidth - r.right)}px`;
+  }
+
+  async function load() {
+    try {
+      const data = await Api.candidate.notifications.list();
+      badge.hidden = !data.unread_count;
+      badge.textContent = data.unread_count > 9 ? '9+' : String(data.unread_count || '');
+      clear(panel).append(
+        h('div', { class: 'notif-head row-between' }, [
+          h('strong', { class: 'fs13', text: 'Notifications' }),
+          data.unread_count
+            ? h('button', {
+                class: 'btn btn-ghost btn-sm', type: 'button', text: 'Mark all read',
+                onClick: async (e) => { e.stopPropagation(); await Api.candidate.notifications.markAllRead(); load(); },
+              })
+            : null,
+        ]),
+        data.notifications.length
+          ? h('div', { class: 'notif-list' }, data.notifications.map((n) => h('a', {
+              class: `notif-item${n.read ? '' : ' unread'}`, href: notificationHref(n),
+              onClick: async () => {
+                panel.hidden = true;
+                if (!n.read) { await Api.candidate.notifications.markRead(n.id); load(); }
+              },
+            }, [
+              h('p', { class: 'fs13', text: notificationText(n) }),
+              h('span', { class: 'fs11 t3', text: relTime(n.created_at) }),
+            ])))
+          : h('p', { class: 'hint', style: { padding: 'var(--s5)' }, text: 'Nothing yet.' }),
+      );
+    } catch { /* a broken bell must not break the whole shell */ }
+  }
+
+  const btn = h('button', {
+    class: 'icon-btn', type: 'button', 'aria-label': 'Notifications', 'aria-haspopup': 'true',
+    onClick: async (e) => {
+      e.stopPropagation();
+      const willOpen = panel.hidden;
+      if (willOpen) position();
+      panel.hidden = !willOpen;
+      if (willOpen) await load();
+    },
+  }, [h('span', { html: icon('bell', 17) }), badge]);
+
+  const wrap = h('div', { class: 'notif-wrap' }, [btn]);
+  wrap.refresh = load;
+  document.addEventListener('click', (e) => {
+    if (!panel.contains(e.target) && !btn.contains(e.target)) panel.hidden = true;
+  });
+  window.addEventListener('resize', () => { if (!panel.hidden) position(); });
+  // The nav bar is sticky, not scroll-fixed content, so the button's own position
+  // barely moves — but "barely" isn't "never" (mobile drawer, zoom), and a dropdown
+  // that drifts from its anchor reads as broken.
+  window.addEventListener('scroll', () => { if (!panel.hidden) position(); }, true);
+
+  load();
+  _notifBell = wrap;
+  return wrap;
+}
+
 function candidateShell(view) {
   const profile = Store.profile('candidate');
   const here = path();
+  const bell = notificationBell();
+  bell.refresh();
 
   return h('div', { class: 'portal' }, [
     h('header', { class: 'portal-bar' }, [
@@ -138,6 +246,7 @@ function candidateShell(view) {
           href: item.href, 'aria-current': here.startsWith(item.match) ? 'page' : null, text: item.label,
         })),
         h('span', { style: { width: 'var(--s3)' } }),
+        bell,
         profile ? h('span', { class: 'avatar', title: profile.full_name, text: initials(profile.full_name) }) : null,
         themeToggle(),
         h('button', {

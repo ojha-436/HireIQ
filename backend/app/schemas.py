@@ -260,3 +260,8 @@ class ApplicantOut(BaseModel):
     status: str
     current_stage_id: int | None
     applied_at: datetime
+    # From the most recent interview session on this application, if one has been
+    # assessed yet. None (not 0) when there is nothing to show — an unscored
+    # applicant must never look like a 0.
+    overall: int | None = None
+    recommendation: str | None = None

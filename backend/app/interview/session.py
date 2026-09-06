@@ -139,14 +139,48 @@ class _Floor:
         self._conns: Dict[str, LC.LiveConnection] = {}
         self._pumps: Dict[str, asyncio.Task] = {}
         self.current: Optional[str] = None
+        # Serializes opening a given persona's connection. Without this, a background
+        # warm() and a real acquire() racing for the same persona (the moderator
+        # picked them before their warm-up finished) could both see "not open yet"
+        # and each open their own connection — a real double-connection bug, not a
+        # theoretical one, once warming runs concurrently with normal handoffs.
+        self._connecting: Dict[str, asyncio.Lock] = {}
 
-    async def acquire(self, persona_key: str, pump: Callable[[str, LC.LiveConnection], Awaitable[None]]) -> LC.LiveConnection:
-        """Open (lazily) and grant the floor to `persona_key`."""
-        if persona_key not in self._conns:
+    def _lock_for(self, persona_key: str) -> asyncio.Lock:
+        lock = self._connecting.get(persona_key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._connecting[persona_key] = lock
+        return lock
+
+    async def _ensure_open(self, persona_key: str,
+                           pump: Callable[[str, LC.LiveConnection], Awaitable[None]]) -> None:
+        if persona_key in self._conns:
+            return
+        async with self._lock_for(persona_key):
+            if persona_key in self._conns:   # re-check: someone else won the race
+                return
             conn = await self._provider.connect(persona_key)
             self._conns[persona_key] = conn
             self._pumps[persona_key] = asyncio.create_task(
                 pump(persona_key, conn), name="iv-pump-{}".format(persona_key))
+
+    async def warm(self, persona_key: str,
+                  pump: Callable[[str, LC.LiveConnection], Awaitable[None]]) -> None:
+        """Open a persona's connection ahead of time, WITHOUT granting it the floor.
+
+        Opening a real Gemini Live connection is a handshake with real latency. Doing
+        it lazily at the exact moment a persona is first handed the floor means that
+        latency lands in the middle of a handoff, every time — this is what actually
+        implements the "pre-warm the next persona" design intent (previously only
+        documented, never wired up: `acquire()` was the only thing that ever opened a
+        connection, and it always did so synchronously in the handoff path).
+        """
+        await self._ensure_open(persona_key, pump)
+
+    async def acquire(self, persona_key: str, pump: Callable[[str, LC.LiveConnection], Awaitable[None]]) -> LC.LiveConnection:
+        """Open (lazily, if not already warmed) and grant the floor to `persona_key`."""
+        await self._ensure_open(persona_key, pump)
         self.current = persona_key
         return self._conns[persona_key]
 
@@ -218,6 +252,13 @@ class InterviewRuntime:
         # True between the model's first output of a turn and its turn_complete. Used to
         # close the candidate's turn at the right moment — see _open_persona_turn().
         self._persona_turn_open = False
+        # True only while the candidate is actually the one expected to speak — from the
+        # moment `your_turn` is emitted until their answer starts being processed. A VAD
+        # cycle that fires OUTSIDE this window and outside an open persona turn is not a
+        # real answer or a real barge-in; it is room noise picked up while the floor
+        # belongs to nobody yet (the analyst/moderator is still deciding, or the next
+        # persona's connection has not started talking). See on_speech_end/on_activity_end.
+        self._awaiting_candidate = False
 
         limits = P.PRESETS[self.preset]
         self.max_seconds = min(limits["minutes"], settings.INTERVIEW_MAX_MINUTES) * 60
@@ -306,6 +347,12 @@ class InterviewRuntime:
         # turn one; Agora voice takes over if and when its agents actually join.
         asyncio.create_task(self._convoai_boot(), name="iv-convoai-boot")
         await self._grant_floor(self.panel[0], first_turn=True)
+        # Warm every other panel member's connection now, in the background, while the
+        # opening greeting plays and the candidate answers — real idle time. A persona
+        # who has never held the floor yet then costs nothing extra at handoff time.
+        for k in self.panel:
+            if k != self.panel[0]:
+                asyncio.create_task(self.floor.warm(k, self._pump), name="iv-warm-{}".format(k))
 
     def _mark_live(self, db) -> None:
         row = db.query(InterviewSession).filter(InterviewSession.id == self.session_id).first()
@@ -563,6 +610,23 @@ class InterviewRuntime:
                                    payload={"auto": True,
                                             "threshold": stage.auto_advance_threshold,
                                             "score": report["overall"]})
+                            # `EP` is the JobPosting alias already imported above, in
+                            # the `if sess.job_application_id:` branch this code path
+                            # requires to have run.
+                            from app.models import Notification as _Notif
+                            job_for_notif = db.query(EP).filter(
+                                EP.id == job_app_row.job_id).first()
+                            db.add(_Notif(
+                                recipient_type="candidate", recipient_id=job_app_row.candidate_id,
+                                kind="application_decision",
+                                payload_json={
+                                    "application_id": job_app_row.id,
+                                    "job_title": job_for_notif.title if job_for_notif else "",
+                                    "status": job_app_row.status,
+                                    "moved_to": next_stage.name if next_stage else None,
+                                    "released": True,
+                                },
+                            ))
                 # Notify employer (broadcast to tenant level — Phase 8 fans out per user)
                 cand = db.query(Candidate).filter(Candidate.id == sess.candidate_id).first()
                 from app.models import Notification
@@ -944,6 +1008,14 @@ class InterviewRuntime:
         this as a turn under manual activity control) and treat it as barge-in."""
         if self.ended:
             return
+        if not (self._awaiting_candidate or self._persona_turn_open):
+            # Between "the moderator just decided" and "the next persona has actually
+            # started talking", nobody is listening for the candidate — the floor is
+            # granted but the connection hasn't produced its first word yet. A VAD
+            # trigger in that gap is room noise, not a real barge-in; ignoring it here
+            # is what stops a stray sound from being merged into the next interviewer
+            # turn (see on_speech_end for the matching half of this guard).
+            return
         if self._cand_turn_started_ms == 0:
             self._cand_turn_started_ms = self._ms()
         await self._ensure_activity_open()
@@ -963,6 +1035,15 @@ class InterviewRuntime:
         """The browser's VAD heard the candidate stop. This — not the model — is what ends
         the candidate's turn, and it is where the moderator gets to choose who answers."""
         if self.ended:
+            return
+        if not (self._awaiting_candidate or self._persona_turn_open):
+            # Same gap as on_speech_start. This VAD cycle never should have opened, so
+            # closing it must not persist whatever it captured as a candidate turn —
+            # that is what previously turned a noise burst into a duplicate transcript
+            # entry AND an extra, unwanted moderator decision (the two combined are what
+            # produced a merged double-question interviewer turn).
+            self._cand_buf = []
+            self._cand_turn_started_ms = 0
             return
         self._capture_allowed = False
         await self._close_activity()
@@ -1119,6 +1200,10 @@ class InterviewRuntime:
         if self.deciding or self.ended:
             return
         self.deciding = True
+        # Close the window immediately: from here until the next persona turn opens (or
+        # this call re-opens it below on empty input), a stray VAD cycle is not the
+        # candidate's turn to interrupt.
+        self._awaiting_candidate = False
         try:
             # Only an answer produced by THIS turn counts. Without the reset a silent turn
             # re-read the previous answer, so the analyst scored it twice and the panel
@@ -1128,6 +1213,7 @@ class InterviewRuntime:
             cand = self.last_candidate
             if not cand:
                 # Nothing was said — re-prompt the same persona rather than scoring silence.
+                self._awaiting_candidate = True
                 await self._nudge_silence()
                 return
             self._silent_turns = 0
@@ -1386,6 +1472,7 @@ class InterviewRuntime:
         if self.mod.turns_taken >= self.mod.max_turns:
             await self.finish(reason="turns")
             return
+        self._awaiting_candidate = True
         self._capture_allowed = True
         await self.emit({"type": "your_turn", "seconds_remaining": self.time_left_s(),
                          "turn": self.mod.turns_taken, "of": self.mod.max_turns})
@@ -1408,7 +1495,7 @@ class InterviewRuntime:
             await self._convoai_speak(persona_key, text)
 
     async def _flush_candidate_turn(self) -> None:
-        text = "".join(self._cand_buf).strip()
+        text = clean_candidate_speech("".join(self._cand_buf))
         self._cand_buf = []
         started = self._cand_turn_started_ms
         self._cand_turn_started_ms = 0
@@ -1591,3 +1678,30 @@ def clean_spoken(text: str) -> str:
         out = " ".join(kept)
 
     return re.sub(r"\s{2,}", " ", out).strip()
+
+
+# Non-speech markers Gemini's own input-audio transcription can emit for indistinct
+# sound — coughs, room noise, a door, silence it still had to label something. These
+# are the model's way of saying "something happened here that was not a word," and
+# must never reach the candidate-facing transcript, the analyst, or the report as if
+# the candidate had said them.
+_NOISE_TOKEN = __import__("re").compile(
+    r"<\s*(?:noise|silence|inaudible|unintelligible|background(?:[ _]?noise)?"
+    r"|music|laughter|cough(?:ing)?|crosstalk)\s*>"
+    r"|\[\s*(?:noise|silence|inaudible|unintelligible|background(?:[ _]?noise)?"
+    r"|music|laughter|cough(?:ing)?|crosstalk)\s*\]",
+    __import__("re").I,
+)
+
+
+def clean_candidate_speech(text: str) -> str:
+    """Strip non-speech placeholder tokens before candidate audio ever becomes a
+    transcript line — see `_NOISE_TOKEN`. Applied once, at the point the candidate's
+    turn is flushed, so every downstream reader (analyst, moderator quoting, the
+    live transcript, the final report) sees the same clean text."""
+    import re
+
+    out = _NOISE_TOKEN.sub("", text or "")
+    out = re.sub(r"\s+([.,!?;:])", r"\1", out)   # "Hi . <noise>" -> "Hi ." -> "Hi."
+    out = re.sub(r"\s{2,}", " ", out)
+    return out.strip()
