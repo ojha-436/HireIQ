@@ -55,13 +55,12 @@ TURN_MAX_S = float(os.getenv("INTERVIEW_TURN_MAX_S", "12"))
 #: TURN_SETTLE_S, applied to the other direction.
 CAND_SETTLE_S = float(os.getenv("INTERVIEW_CAND_SETTLE_S", "2.5"))
 
-#: Ceiling on that wait, so a stuck transcriber cannot stall the turn for ever.
-#: Generous on purpose: the tail is proportional to how long the candidate spoke —
-#: a 12-second answer was still being transcribed 7.8 seconds after end-of-speech — and
-#: a ceiling shorter than the tail truncates exactly the long, detailed answers that
-#: deserve the most credit. The quiet window above is what normally ends the wait; this
-#: only ever fires when transcription genuinely stalls.
-CAND_SETTLE_MAX_S = float(os.getenv("INTERVIEW_CAND_SETTLE_MAX_S", "25"))
+#: Ceiling on that wait. This runs on the socket's receive loop, so it is also the
+#: budget for how long the server can go without reading a frame: too generous and the
+#: transport stops answering the browser's keepalive and drops the interview. Eight
+#: seconds covers the usual transcription tail; a late tail still merges into the answer
+#: it belongs to (see `_flush_candidate_turn`) rather than being lost.
+CAND_SETTLE_MAX_S = float(os.getenv("INTERVIEW_CAND_SETTLE_MAX_S", "8"))
 
 #: How long to wait for the FIRST transcribed word before concluding the candidate said
 #: nothing at all. Without it, true silence would wait out CAND_SETTLE_MAX_S before the
@@ -71,6 +70,7 @@ CAND_FIRST_WORD_S = float(os.getenv("INTERVIEW_CAND_FIRST_WORD_S", "3.0"))
 #: How many consecutive silent turns still earn a spoken nudge before the panel stops
 #: asking. Prevents a broken microphone turning into an endless loop of prompting.
 MAX_SILENT_NUDGES = 2
+
 
 #: RMS below which a 16-bit PCM frame counts as room tone rather than speech.
 SPEECH_RMS_FLOOR = int(os.getenv("INTERVIEW_SPEECH_RMS_FLOOR", "500"))
@@ -996,12 +996,21 @@ class InterviewRuntime:
         self._activity_open.add(key)
 
     async def _close_activity(self) -> None:
-        key = self.floor.current
-        conn = self.floor.conn
-        if not key or conn is None or key not in self._activity_open:
-            return
-        await conn.signal_activity_end()
-        self._activity_open.discard(key)
+        """End the activity window on EVERY connection that has one open.
+
+        Closing only `floor.current` was wrong whenever the floor moved while the
+        candidate was still talking, which is routine on a multi-persona panel: the
+        window was opened on the persona who asked the question and closed on the one
+        who took over. The connection actually holding the audio never received its
+        activity_end, so the model never committed the turn — no input transcript, no
+        analysis, and an answer that reached the transcript late (via the next persona
+        turn) but was never scored. A whole panel interview could come back 0.
+        """
+        for key in list(self._activity_open):
+            conn = self.floor.get(key)
+            self._activity_open.discard(key)
+            if conn is not None:
+                await conn.signal_activity_end()
 
     async def on_speech_start(self) -> None:
         """The browser's VAD heard speech begin. Two jobs: tell the model (so it treats
@@ -1047,30 +1056,18 @@ class InterviewRuntime:
             return
         self._capture_allowed = False
         await self._close_activity()
-        # Settle and score OFF the socket's receive loop.
+        # Settle, then score — INLINE, on the socket's receive loop.
         #
-        # `interview_ws` awaits this handler inline, so anything slow here stops the
-        # server reading the WebSocket at all. Waiting for the transcription tail and
-        # then running the analyst is seconds of work, and with the read loop parked the
-        # transport applies backpressure and stops answering the browser's keepalive
-        # pings — the interview died mid-answer with a 1011 keepalive timeout. Hand it
-        # to a task and return to reading frames immediately.
-        task = getattr(self, "_settle_task", None)
-        if task is not None and not task.done():
-            return                      # a decision for this answer is already running
-        self._settle_task = asyncio.create_task(
-            self._settle_then_advance(), name="iv-settle")
-
-    async def _settle_then_advance(self) -> None:
-        """The candidate's turn, decided without holding up the socket."""
-        try:
-            await self._await_input_settled()
-            await self._advance_turn()
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:  # noqa: BLE001 — a failed turn must not kill the socket
-            await self.emit({"type": "error",
-                             "detail": "{}: {}".format(type(exc).__name__, exc)})
+        # This was briefly a background task, to stop the wait parking the read loop and
+        # tripping the browser's keepalive. That traded one bug for a worse one: the
+        # decision then raced the end of the interview, `finish()` set `ended` first,
+        # `_advance_turn` returned immediately, and the analyst never ran — so a strong
+        # interview was reported as 0 / strong_no with no evidence at all. A silent
+        # mis-scoring is far more damaging than a dropped socket, so the decision is
+        # back on the critical path and the WAIT is bounded instead (CAND_SETTLE_MAX_S),
+        # which is what actually caused the keepalive timeout.
+        await self._await_input_settled()
+        await self._advance_turn()
 
     async def _nudge_silence(self) -> None:
         """The candidate's turn produced no words. Say something.
