@@ -1,7 +1,8 @@
 # HireIQ
 
-**An adaptive, multi-persona AI interview panel.** Five AI interviewers with different
-jobs share one memory of what the candidate said, hand the floor to each other under
+**An adaptive, multi-persona AI interview panel.** Six named AI interviewers — Donna
+(HR) opens with a warm welcome, then Alex, Mike, Peter, Zara and Sam take over by
+role — share one memory of what the candidate said, hand the floor to each other under
 deterministic rules, and produce an assessment where every line cites the transcript.
 
 Built for **PS11 — Adaptive Voice Interview Platform** (Track 1, Coordinated AI Interview Panel).
@@ -13,7 +14,7 @@ Built for **PS11 — Adaptive Voice Interview Platform** (Track 1, Coordinated A
 
 | | |
 |---|---|
-| **Tests** | 174 passing |
+| **Tests** | 245 passing |
 | **Stack** | FastAPI · Gemini Live (native audio) · Agora RTC + Conversational AI · vanilla-JS SPA, no bundler |
 | **Lines** | ~16,500 (app + tests, excluding vendored SDK) |
 | **Question grounding** | O*NET 31.0 (U.S. Dept of Labor, CC BY 4.0) — 1,130 seeded probes |
@@ -59,8 +60,8 @@ R2 is a **hard rule**, not a prompt hoping for that behaviour, and
 
 | # | Capability | How | Where |
 |---|---|---|---|
-| 1 | Real-time, interruptible voice | Agora RTC media + Gemini Live native audio; hysteresis VAD in an AudioWorklet; **symmetric barge-in** — client buffer flush *and* server `activity_end` *and* Agora `/interrupt` | `frontend/js/interview/{bot-audio,mic-worklet}.js` |
-| 2 | Multiple interviewer roles | 5 personas, 5 distinct voices, 5 probe charters, stable Agora bot UIDs | `backend/app/interview/personas.py` |
+| 1 | Real-time, interruptible voice | Candidate mic + camera publish into the Agora channel as real tracks; the AI's voice is a genuinely separate Agora participant (its own `agent_rtc_uid` per persona) once ConvoAI credentials exist, Gemini Live native audio otherwise; hysteresis VAD in an AudioWorklet; **symmetric barge-in** — client buffer flush *and* server `activity_end` *and* Agora `/interrupt`, none of which ever disconnects the media session | `frontend/js/interview/{room,bot-audio,mic-worklet}.js` |
+| 2 | Multiple interviewer roles | 6 named personas (HR opens every interview, then 5 role specialists), 6 distinct voices, stable Agora bot UIDs | `backend/app/interview/personas.py` |
 | 3 | Shared candidate context | A server-owned flag store + established facts, rendered into each persona's briefing before it takes the floor — **visible on the monitor as "Panel Memory"** | `moderator.py`, `session.py` |
 | 4 | Dynamic follow-up questions | Intent-driven generation that quotes the candidate back; the bank is a fallback, and the report says what share was generated | `moderator.py`, `retrieval.py` |
 | 5 | Controlled turn-taking | Deterministic R1–R7 + W0 in priority order; LLM tiebreak clamped to legal moves | `moderator.py` |
@@ -135,9 +136,10 @@ language gets the same panel and the same assessment.
 
 ![Interview room](docs/screenshots/09-interview-room.png)
 
-Five tiles, one floor. The tally only pulses when **audio is actually playing** — holding
-the floor silently reads "Thinking…", because a UI that claims someone is speaking when
-they aren't is worse than no indicator.
+Six tiles, one floor — Donna's opening welcome, then whichever specialist the moderator
+hands to next. The tally only pulses when **audio is actually playing** — holding the
+floor silently reads "Thinking…", because a UI that claims someone is speaking when they
+aren't is worse than no indicator.
 
 ### 5 · The employer watches, and can whisper
 
@@ -221,7 +223,7 @@ hermetic and fast.
 ### Tests
 
 ```bash
-cd backend && ./.venv/bin/python -m pytest tests/ -q      # 174 passing
+cd backend && ./.venv/bin/python -m pytest tests/ -q      # 245 passing
 ./.venv/bin/python -m pytest tests/test_definition_of_done.py -v   # the 11 capabilities
 ./.venv/bin/python -m pytest tests/test_injection.py -v            # prompt-injection resistance
 ```
@@ -318,7 +320,7 @@ backend/
     security.py        stdlib PBKDF2 + HS256 JWT, two audiences
     interview/         THE ENGINE
       moderator.py       R1-R7 + W0, difficulty bands, shared flag store
-      personas.py        5 charters + the System Invariants layer
+      personas.py        6 named personas (HR opener + 5 specialists) + the System Invariants layer
       analyst.py         per-turn scoring, injection stripping, contradictions
       scenarios.py       role-play engine (PS11 #6)
       live_client.py     Gemini Live, with an offline fallback
@@ -329,7 +331,7 @@ backend/
       skills.py          JD -> skills -> proposed panel (model-free)
       resume.py          résumé -> skills + years; job match %
       onet.py            O*NET -> question bank with provenance
-  tests/               174 tests across 10 files
+  tests/               245 passing across 22 files
   data/onet/           fetch script + attribution (CSVs not committed)
 
 frontend/
@@ -347,6 +349,7 @@ frontend/
 | [`plan.md`](plan.md) | The build plan, PS11 capability map, and Definition of Done |
 | [`PLAN-V2.md`](PLAN-V2.md) | Demo-day plan: why the v2 backlog was skipped, and what replaced it |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | System design, schema, wire protocols |
+| [`AGORA_GEMINI_LATENCY_AUDIT.md`](AGORA_GEMINI_LATENCY_AUDIT.md) | How candidate/AI audio actually moves between Agora and Gemini, gap vs. the target architecture, and where the per-turn latency goes |
 | [`design-system/MASTER.md`](design-system/MASTER.md) | Design tokens, motion, accessibility floor |
 | [`SECRETS.md`](SECRETS.md) | Creating the secrets Cloud Run expects |
 | [`docs/README-dev.md`](docs/README-dev.md) | Fuller developer notes |
