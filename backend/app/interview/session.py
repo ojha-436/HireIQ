@@ -1715,6 +1715,36 @@ _NOISE_TOKEN = __import__("re").compile(
 )
 
 
+#: Above this fraction of non-Latin-script letters, treat the transcription as
+#: unreliable rather than a genuine answer in another language — see
+#: `_is_mostly_non_latin`. A handful of accented/foreign letters in an otherwise
+#: English answer (a name, a loanword) must not trip this; a transcription that is
+#: mostly a different script is a different situation entirely.
+_NON_LATIN_THRESHOLD = 0.5
+
+
+def _is_mostly_non_latin(text: str) -> bool:
+    """True if most of the alphabetic characters in `text` are not Latin script.
+
+    `input_audio_transcription` is pinned to English (`language_codes=["en-US"]`,
+    live_client.py) — but that is a hint to the model, not a hard constraint, and it
+    cannot fix audio that was too degraded to transcribe at all. When the underlying
+    signal is bad enough (an unstable connection, packet loss, a dropped mic frame),
+    a multilingual ASR model can emit confident-looking text in an entirely different
+    script instead of a placeholder token — real reported symptom: a stray Malayalam
+    character, later a run of Arabic-script text, both from candidates speaking
+    English. This is not the candidate's answer; it is noise wearing the shape of an
+    answer, and must be treated the same way `_NOISE_TOKEN` already is.
+    """
+    import unicodedata
+
+    letters = [ch for ch in text if ch.isalpha()]
+    if not letters:
+        return False
+    non_latin = sum(1 for ch in letters if "LATIN" not in unicodedata.name(ch, ""))
+    return (non_latin / len(letters)) > _NON_LATIN_THRESHOLD
+
+
 def clean_candidate_speech(text: str) -> str:
     """Strip non-speech placeholder tokens before candidate audio ever becomes a
     transcript line — see `_NOISE_TOKEN`. Applied once, at the point the candidate's
@@ -1725,4 +1755,7 @@ def clean_candidate_speech(text: str) -> str:
     out = _NOISE_TOKEN.sub("", text or "")
     out = re.sub(r"\s+([.,!?;:])", r"\1", out)   # "Hi . <noise>" -> "Hi ." -> "Hi."
     out = re.sub(r"\s{2,}", " ", out)
-    return out.strip()
+    out = out.strip()
+    if out and _is_mostly_non_latin(out):
+        return ""
+    return out

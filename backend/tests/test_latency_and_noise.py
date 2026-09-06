@@ -66,6 +66,27 @@ def test_clean_candidate_speech_strips_bracketed_and_angle_noise_tokens():
         assert RT.clean_candidate_speech(raw) == expected
 
 
+def test_clean_candidate_speech_discards_mostly_non_latin_transcriptions():
+    """Reported live: a candidate speaking English got transcribed as a stray
+    Malayalam character, and later as a run of Arabic-script text. Input
+    transcription is pinned to English (language_codes=["en-US"], live_client.py) —
+    a hint the model usually follows, but not a hard constraint against audio too
+    degraded (an unstable connection, packet loss) to transcribe at all. When the
+    signal is bad enough, a multilingual ASR model can emit confident-looking text in
+    an entirely different script instead of a placeholder <noise> token. That is not
+    a real answer in another language; it must be discarded the same way a noise
+    token is, not scored as the candidate's response."""
+    reported = "صunu صند صون صunu صون صاحب سند صغیر صنف اور صنف صاحب صبح شام"
+    assert RT.clean_candidate_speech(reported) == ""
+
+    # A handful of foreign/accented letters in an otherwise English answer (a name, a
+    # loanword) must NOT trip this — only a transcription that is mostly a different
+    # script is the failure mode being guarded against.
+    assert RT.clean_candidate_speech(
+        "My manager was Renée, and we shipped a Kubernetes migration together."
+    ) != ""
+
+
 def test_flush_candidate_turn_strips_noise_before_it_is_saved_or_quoted():
     rt = _runtime()
     rt._save_turn = AsyncMock(return_value="turn-1")
