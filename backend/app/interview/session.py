@@ -1423,8 +1423,21 @@ class InterviewRuntime:
                     # `_cand_buf` at flush time via _flush_candidate_turn); only the
                     # live display was wrong.
                     self._cand_buf.append(ev["text"])
+                    # `_cand_buf` itself stays RAW (a `<noise>` tag or a stray non-Latin
+                    # fragment can still legitimately need to survive for later fragments
+                    # to be appended against — see _flush_candidate_turn/_append_to_turn).
+                    # But what the candidate SEES live must go through the same
+                    # clean_candidate_speech() the final flush already uses, or a
+                    # mid-turn ASR hallucination (Gemini's own "<noise>" placeholder, or
+                    # a burst of non-Latin-script garbage from a degraded connection)
+                    # flashes in the live transcript even though it was never going to be
+                    # scored as the candidate's answer. Reported live: a real-mic field
+                    # test on an unstable connection showed the transcript display itself
+                    # (not just scoring) picking up a two-character Japanese-script
+                    # fragment from a garbled frame, from a candidate speaking English.
                     await self.emit({"type": "transcript", "speaker": "candidate",
-                                     "text": "".join(self._cand_buf), "final": False,
+                                     "text": clean_candidate_speech("".join(self._cand_buf)),
+                                     "final": False,
                                      "turn_id": getattr(self, "_open_cand_turn_id", "") or None})
 
                 elif kind == LC.EV_OUTPUT_TRANSCRIPT:

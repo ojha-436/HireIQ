@@ -52,11 +52,14 @@ def test_each_streamed_update_carries_the_full_text_so_far():
         for call in rt.emit.await_args_list
         if call.args[0].get("speaker") == "candidate"
     ]
+    # Trailing whitespace is stripped by clean_candidate_speech (see below) -- a
+    # cosmetic side effect of reusing the same cleaner the final flush already used,
+    # invisible in the rendered UI either way.
     assert texts == [
-        "I ",
-        "I am ",
-        "I am a ",
-        "I am a backend ",
+        "I",
+        "I am",
+        "I am a",
+        "I am a backend",
         "I am a backend engineer.",
     ], texts
 
@@ -73,3 +76,30 @@ def test_the_final_emitted_fragment_is_not_just_the_last_word():
     ][-1]
     assert last_candidate_text == "I am a backend engineer."
     assert last_candidate_text != "engineer."
+
+
+class _GarbledFragmentConnection(LC.LiveConnection):
+    """A single ASR fragment that is pure non-Latin-script noise.
+
+    Reported live: a real-mic field test over a degraded connection showed a bare
+    "うん" as its own transcript entry, from a candidate speaking English the whole
+    time. clean_candidate_speech() already discarded this at the FINAL flush (so
+    scoring was never affected) -- but the live per-fragment display emitted the raw,
+    uncleaned ev["text"] straight from Gemini, so the candidate still saw it flash by.
+    """
+
+    async def events(self) -> AsyncIterator[Dict[str, Any]]:
+        yield {"type": LC.EV_INPUT_TRANSCRIPT, "text": "うん"}
+
+
+def test_a_standalone_non_latin_fragment_does_not_reach_the_live_transcript():
+    rt = _runtime()
+
+    _run(rt._pump("tech", _GarbledFragmentConnection()))
+
+    texts = [
+        call.args[0]["text"]
+        for call in rt.emit.await_args_list
+        if call.args[0].get("speaker") == "candidate"
+    ]
+    assert texts == [""], texts

@@ -85,6 +85,17 @@ export function interviewGate({ id }) {
     if (session.disclosure_accepted) { mountRoom(host, id, session); return; }
 
     const agree = h('input', { type: 'checkbox', id: 'agree', style: { width: '18px', height: '18px' } });
+    // Default ON — matches the constraints _joinMedia has always requested. Off here
+    // is an opt-OUT, not a new default, so nobody who never looks at this section
+    // gets a behavior change. Exists because aggressive noise suppression can, on
+    // some mic/driver combinations, suppress real speech down near the noise floor
+    // (seen live as Agora's own AUDIO_INPUT_LEVEL_TOO_LOW diagnostic) — giving the
+    // candidate the toggle beats us guessing which setting their hardware wants.
+    const echoCancel = h('input', { type: 'checkbox', id: 'echo-cancel', checked: true,
+      style: { width: '16px', height: '16px' } });
+    const noiseSuppress = h('input', { type: 'checkbox', id: 'noise-suppress', checked: true,
+      style: { width: '16px', height: '16px' } });
+    const permStatus = h('p', { class: 'hint', style: { minHeight: '1.2em' } });
     const startBtn = h('button', {
       class: 'btn btn-primary btn-lg btn-block', type: 'button', disabled: true,
       text: 'I understand — start the interview',
@@ -96,12 +107,37 @@ export function interviewGate({ id }) {
             method: 'POST',
             headers: { Authorization: `Bearer ${Store.token('candidate')}` },
           });
-          mountRoom(host, id, session);
         } catch (err) {
           toast(err.message || 'Could not start', 'err');
           startBtn.disabled = false;
           startBtn.replaceChildren('I understand — start the interview');
+          return;
         }
+
+        const audioPrefs = { echoCancellation: echoCancel.checked, noiseSuppression: noiseSuppress.checked };
+        // Ask for the mic/camera permission HERE — right after consent, before the
+        // ~1.3 MB Agora script load and room mount — so the browser's permission
+        // prompt and its outcome are both visible on this screen, not discovered
+        // silently deep inside the room. The candidate can still decline and answer
+        // by typing; this only makes that choice explicit instead of implicit.
+        permStatus.textContent = 'Requesting microphone and camera access…';
+        let media;
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            audio: { echoCancellation: audioPrefs.echoCancellation,
+                     noiseSuppression: audioPrefs.noiseSuppression, channelCount: 1 },
+            video: true,
+          });
+          media = { stream };
+          permStatus.textContent = 'Microphone and camera ready.';
+        } catch (err) {
+          media = { stream: null, error: err };
+          permStatus.textContent = 'Microphone/camera not available (' + (err.message || 'permission denied')
+            + ') — you can still answer by typing.';
+        }
+
+        startBtn.replaceChildren(h('span', { class: 'spin' }), 'Starting…');
+        mountRoom(host, id, session, audioPrefs, media);
       },
     });
     agree.onchange = () => { startBtn.disabled = !agree.checked; };
@@ -140,6 +176,19 @@ export function interviewGate({ id }) {
         h('p', { class: 'hint', text: 'You can switch at any point during the interview.' }),
       ]),
 
+      h('div', { class: 'consent-answer-mode' }, [
+        h('h3', { class: 'filter-title', text: 'Microphone settings' }),
+        h('p', { class: 'hint', text:
+          'Leave these on unless a test call sounded muffled or cut out — some ' +
+          'microphones and drivers suppress real speech along with background noise.' }),
+        h('div', { class: 'col gap2' }, [
+          h('label', { class: 'row gap2', for: 'echo-cancel', style: { cursor: 'pointer' } },
+            [echoCancel, h('span', { class: 'fs13 t2', text: 'Echo cancellation' })]),
+          h('label', { class: 'row gap2', for: 'noise-suppress', style: { cursor: 'pointer' } },
+            [noiseSuppress, h('span', { class: 'fs13 t2', text: 'Noise suppression' })]),
+        ]),
+      ]),
+
       h('div', { class: 'row wrap gap2' },
         (session.panel || []).map((p) => h('span', { class: `persona p-${p.key}`, text: p.label }))),
 
@@ -152,6 +201,7 @@ export function interviewGate({ id }) {
       ]),
 
       startBtn,
+      permStatus,
       h('a', { class: 'btn btn-ghost btn-block',
         href: session.is_practice ? '#/candidate/practice' : '#/candidate/applications',
         text: 'Not now' }),
@@ -161,7 +211,7 @@ export function interviewGate({ id }) {
   return host;
 }
 
-async function mountRoom(host, sessionId, session) {
+async function mountRoom(host, sessionId, session, audioPrefs, media) {
   clear(host);
   host.className = '';
   // Agora and the room are ~1.3 MB — only loaded once an interview actually starts.
@@ -179,6 +229,9 @@ async function mountRoom(host, sessionId, session) {
     sessionId,
     token: Store.token('candidate'),
     session,
+    audioPrefs,   // undefined on a rejoin (no consent form was shown) -- room.js defaults it
+    media,        // { stream } | { stream: null, error } from the pre-flight check above,
+                  // or undefined on a rejoin, in which case room.js asks itself
     onExit: () => go(session.is_practice
       ? `/candidate/practice/${sessionId}/report`
       : '/candidate/applications'),

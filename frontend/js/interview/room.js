@@ -17,12 +17,19 @@ import { BotAudio, captureMic } from './bot-audio.js';
 const WORKLET_URL = new URL('./mic-worklet.js', import.meta.url).href;
 
 export class InterviewRoom {
-  constructor(root, { sessionId, token, session, onExit }) {
+  constructor(root, { sessionId, token, session, onExit, audioPrefs, media }) {
     this.root = root;
     this.sessionId = sessionId;
     this.token = token;
     this.session = session;               // from GET /api/candidate/sessions/:id
     this.onExit = onExit || (() => {});
+    // Candidate's echo-cancellation/noise-suppression choice from the consent screen.
+    // Undefined on a rejoin (no consent form shown that time) — default matches what
+    // _joinMedia always requested before this was configurable.
+    this.audioPrefs = audioPrefs || { echoCancellation: true, noiseSuppression: true };
+    // { stream } | { stream: null, error } if the consent screen already ran the
+    // permission prompt; undefined on a rejoin, in which case _joinMedia asks itself.
+    this._preAcquiredMedia = media || null;
 
     this.ws = null;
     this.bot = new BotAudio(24000);
@@ -146,13 +153,26 @@ export class InterviewRoom {
     // Microphone is required; camera and Agora are not. An interview without a
     // video tile still works — an interview without a mic does not.
     let stream;
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 },
-        video: true,
-      });
-    } catch {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    if (this._preAcquiredMedia) {
+      // The consent screen already ran this exact prompt once (so the candidate's
+      // echo-cancellation/noise-suppression choice and the permission dialog both
+      // happened up front, not silently deep in the room) — never call
+      // getUserMedia() a second time for the same join, which would either prompt
+      // twice or risk grabbing a different device.
+      if (!this._preAcquiredMedia.stream) {
+        throw this._preAcquiredMedia.error || new Error('permission denied');
+      }
+      stream = this._preAcquiredMedia.stream;
+    } else {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: this.audioPrefs.echoCancellation,
+                   noiseSuppression: this.audioPrefs.noiseSuppression, channelCount: 1 },
+          video: true,
+        });
+      } catch {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      }
     }
     this._localStream = stream;
 
