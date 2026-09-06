@@ -68,6 +68,17 @@ export class InterviewRoom {
     try {
       await this.bot.resume();
     } catch { /* best effort; playback still attempts inline as audio arrives */ }
+    // A browser's autoplay policy only allows AudioContext.resume() to actually take
+    // effect within (or shortly after) a genuine user gesture. By the time this runs,
+    // the click on "start the interview" has already gone through a consent POST, an
+    // ~1.3 MB Agora script load, and a dynamic import — real seconds, not microtasks,
+    // for a slow connection. If the browser decided that gap was too long, resume()
+    // resolves without error but the context is STILL suspended, and every persona's
+    // audio would then play into a context that never actually produces sound — total
+    // silence, no error anywhere, which is indistinguishable from "the AI never speaks."
+    // Tell the candidate plainly, and unlock on their very next tap/click/keypress
+    // rather than requiring a reload.
+    if (this.bot.ctx.state === 'suspended') this._armAudioUnlock();
     this._openSocket();
     try {
       await this._joinMedia();
@@ -75,6 +86,25 @@ export class InterviewRoom {
       this._voiceWarning('Your microphone isn’t available (' + (err.message || 'permission denied')
         + '). You can still answer by typing below — this is scored exactly the same way.');
     }
+  }
+
+  _armAudioUnlock() {
+    this._voiceWarning('Your browser is blocking audio until you interact with this page. '
+      + 'Tap or click anywhere here to turn the interviewers’ voices on.');
+    const unlock = async () => {
+      try { await this.bot.resume(); } catch { /* try again on the next interaction */ }
+      if (this.bot.ctx.state !== 'suspended') {
+        this.root.removeEventListener('click', unlock);
+        this.root.removeEventListener('keydown', unlock);
+        this.root.removeEventListener('touchstart', unlock);
+        this._warnedNoVoice = false;
+        const banner = this.root.querySelector('#voice-warning');
+        if (banner) banner.hidden = true;
+      }
+    };
+    this.root.addEventListener('click', unlock);
+    this.root.addEventListener('keydown', unlock);
+    this.root.addEventListener('touchstart', unlock);
   }
 
   async destroy() {

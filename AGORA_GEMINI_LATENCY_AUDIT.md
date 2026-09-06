@@ -38,6 +38,24 @@
 > since this file is an `AudioWorkletProcessor` with no browser-based test harness in
 > this repo) that simulates a persistently loud room and confirms the valve fires, and
 > confirms a genuine quiet pause still ends speech the fast way, unaffected.
+>
+> **Second field test, after the above two fixes:** Gemini's audio was confirmed
+> unconditional (reverted per above) and the candidate STILL heard no interviewer voice
+> at all. Root cause: `AudioContext.resume()` only reliably takes effect within (or
+> shortly after) a genuine user gesture. By the time `room.js`'s `start()` calls it, the
+> click on "start the interview" has already gone through a consent POST, an ~1.3 MB
+> Agora script load, and a dynamic `import()` — real seconds on a slow connection, easily
+> outside whatever window the browser considers "close enough" to the original click.
+> When that happens, `resume()` resolves without throwing, but `ctx.state` stays
+> `'suspended'` — every persona's audio was then scheduled into a context that can never
+> actually produce sound, silently. `start()` now checks `ctx.state` explicitly after
+> resuming (not just assuming success): if still suspended, it warns the candidate
+> plainly and re-attempts the resume on their very next click/tap/keypress anywhere in
+> the room, rather than requiring a reload. Covered by a static guard
+> (`test_audio_unlock_guard.py`) — there's no way to fake real browser autoplay policy
+> in this test environment, so this could not be re-verified against an actual suspended
+> context; it needs a real retest to confirm the warning/recovery path is ever actually
+> reached and that it resolves the silence.
 
 # Agora + Gemini media-path audit
 
