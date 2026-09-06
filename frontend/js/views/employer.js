@@ -431,6 +431,10 @@ const REC_LABEL = {
   strong_yes: 'Strong yes', yes: 'Yes', lean_yes: 'Lean yes',
   lean_no: 'Lean no', no: 'No', strong_no: 'Strong no',
 };
+const APP_STATUS_LABEL = {
+  applied: 'Applied', in_progress: 'Interviewing', shortlisted: 'Shortlisted',
+  offer: 'Offer', rejected: 'Rejected',
+};
 
 /** Scored applicants first (highest score first), unscored ones after by recency —
  * this ordering alone is most of "how an employer selects the best candidate": the
@@ -472,7 +476,8 @@ function renderApplicantsTable(applicants) {
               ])
             : h('span', { class: 'fs12 t3', text: 'Not yet interviewed' }),
         ]),
-        h('td', {}, [h('span', { class: 'status status-applied', text: 'Applied' })]),
+        h('td', {}, [h('span', { class: `status status-${a.status}`,
+          text: APP_STATUS_LABEL[a.status] || a.status })]),
         h('td', { class: 'fs13 t2', text: relTime(a.applied_at) }),
         h('td', { style: { textAlign: 'right' } }, [
           h('div', { class: 'row gap2', style: { justifyContent: 'flex-end' } }, [

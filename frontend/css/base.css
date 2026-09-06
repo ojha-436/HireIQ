@@ -214,6 +214,10 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
 .status-paused { color: var(--warn); }
 .status-closed { color: var(--text-3); }
 .status-applied { color: var(--info); }
+.status-in_progress { color: var(--warn); }
+.status-shortlisted { color: var(--success); }
+.status-offer { color: var(--success); }
+.status-rejected { color: var(--danger); }
 
 /* ------------------------------------------------------------------- tables */
 .table-wrap { overflow-x: auto; max-width: 100%; border-radius: var(--r-lg); border: 1px solid var(--line); }
