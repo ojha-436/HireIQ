@@ -9,13 +9,35 @@
 > on the candidate's. `attachAgora` itself is removed as dead code. Item 6 (per-hop
 > timing instrumentation) is not implemented — see the note at the end of this file.
 >
-> None of this has run against a live Agora App ID or ConvoAI credentials —
-> `AGORA_APP_ID`/`AGORA_CUSTOMER_ID`/`AGORA_CUSTOMER_SECRET` are still empty in this
-> environment, so `info.enabled` stays false and the new publish/subscribe code path has
-> never actually executed. It has only been verified by (a) the full backend test suite
-> plus 7 new regression tests (`test_agora_media_guard.py`, `test_convoai_audio_guard.py`)
-> and (b) a live browser run confirming zero behavior change to the existing
-> no-Agora-credentials flow. Test this for real the first time real credentials exist.
+> None of this had run against a live Agora App ID or ConvoAI credentials at the time it
+> was written.
+>
+> **Field-test update:** real credentials were added and tested. Text-driven turns
+> confirmed genuine, résumé-grounded Gemini conversation and real Agora ConvoAI agent
+> creation (4 agents, one per persona) — the reasoning/turn-taking/scoring layers all
+> work correctly with real keys. But the FIRST real spoken-audio test (real microphone,
+> real browser, real network) reported **no candidate transcript and no audible
+> interviewer voice at all**. The `_pump()` double-audio guard (§6 item 3) has been
+> **reverted**: it suppressed Gemini's own WebSocket audio whenever ConvoAI was active,
+> trusting that the browser's Agora subscribe would carry the voice instead — but the
+> backend has no signal that the browser's Agora join/subscribe actually succeeded in
+> the field (firewall/NAT/WebRTC conditions no local test could reproduce), and when it
+> didn't, suppressing the one proven audio path left the candidate with silence. Gemini's
+> audio is unconditional again — a possible doubled voice is a far smaller problem than
+> none at all.
+>
+> The missing-transcript half of that report turned out to be a real, confirmed bug, not
+> a threshold-calibration guess: the candidate's mic tile stayed on "YOU ARE SPEAKING"
+> continuously, which pinpoints it exactly. `mic-worklet.js`'s hysteresis VAD has no way
+> out of the `speaking` state except the RMS staying under `END_RMS` for `HANG_MS`
+> straight — if a room's ambient noise floor sits at or above `END_RMS`, that quiet gap
+> never happens, `speech_end` never fires, and the turn never settles server-side either.
+> Fixed with a `MAX_SPEECH_MS` ceiling that forces the boundary regardless of RMS once
+> continuous "speaking" runs too long — the interview can no longer lock up this way.
+> Covered by an executable regression test (`mic-worklet.node-test.mjs`, run via Node
+> since this file is an `AudioWorkletProcessor` with no browser-based test harness in
+> this repo) that simulates a persistently loud room and confirms the valve fires, and
+> confirms a genuine quiet pause still ends speech the fast way, unaffected.
 
 # Agora + Gemini media-path audit
 
@@ -183,7 +205,7 @@ Candidate mic → WebSocket → AI/Interview layer → AI audio → WebSocket �
 | One Agora channel per interview, not per persona | ✅ Yes | `InterviewSession.agora_channel`, one value; personas differ only by `bot_uid`/voice |
 | No reconnect / re-publish per turn | ✅ Yes (for Gemini connections) | `_Floor.warm`/`acquire`, `session.py:134-193` — opened once, reused |
 | Barge-in without disconnecting the media session | ✅ Yes (over WebSocket) | see §5 |
-| No duplicate STT→LLM→TTS round trips | ✅ Fixed | `_pump()` no longer emits Gemini's own audio over the WebSocket while `_convoai` is active — see §1 update |
+| No duplicate STT→LLM→TTS round trips | ⚠️ Reverted after a real-credentials test | See "Field-test update" below — suppressing Gemini's audio left the candidate with no audio at all |
 
 ---
 

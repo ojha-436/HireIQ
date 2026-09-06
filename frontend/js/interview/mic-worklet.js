@@ -30,6 +30,17 @@ const START_RMS = 0.018;      // ~-35 dBFS: above typical room noise, below quie
 const END_RMS = 0.010;        // lower bar to stay open, so pauses mid-sentence don't cut
 const HANG_MS = 700;          // silence before we call the turn over
 const MIN_SPEECH_MS = 250;    // ignore coughs, clicks and door slams
+// Safety valve: the only way out of `speaking` above is the RMS staying under END_RMS
+// for HANG_MS straight. A candidate whose room's ambient noise floor sits at or above
+// END_RMS (a fan, AC, traffic, room echo) never produces a quiet enough gap, so
+// speech_end never fires at all — the tile reads "YOU ARE SPEAKING" forever and no
+// answer ever reaches the transcript, because the turn never settles server-side
+// either. This forces a boundary regardless of RMS so the interview can never lock up
+// that way. If the candidate is still genuinely talking, MIN_SPEECH_MS reopens
+// speech_start within a quarter-second of this firing; the backend's own late-tail
+// append logic (session.py `_flush_candidate_turn`) is what stitches a long answer
+// split by this back into one transcript row.
+const MAX_SPEECH_MS = 20000;
 
 class MicCapture extends AudioWorkletProcessor {
   constructor() {
@@ -44,6 +55,7 @@ class MicCapture extends AudioWorkletProcessor {
     this.speaking = false;
     this.silentMs = 0;
     this.speechMs = 0;
+    this.continuousMs = 0;
     this.frameMs = 0;
     this.port.onmessage = (e) => {
       if (e.data && e.data.type === 'mute') this.muted = !!e.data.value;
@@ -76,6 +88,7 @@ class MicCapture extends AudioWorkletProcessor {
         if (this.speechMs >= MIN_SPEECH_MS) {
           this.speaking = true;
           this.silentMs = 0;
+          this.continuousMs = 0;
           this.port.postMessage({ type: 'speech_start' });
         }
       } else {
@@ -84,17 +97,27 @@ class MicCapture extends AudioWorkletProcessor {
       return;
     }
 
+    this.continuousMs += ms;
     if (rms < END_RMS) {
       this.silentMs += ms;
       if (this.silentMs >= HANG_MS) {
-        this.speaking = false;
-        this.speechMs = 0;
-        this.silentMs = 0;
-        this.port.postMessage({ type: 'speech_end' });
+        this._endSpeech();
+        return;
       }
     } else {
       this.silentMs = 0;
     }
+    if (this.continuousMs >= MAX_SPEECH_MS) {
+      this._endSpeech();
+    }
+  }
+
+  _endSpeech() {
+    this.speaking = false;
+    this.speechMs = 0;
+    this.silentMs = 0;
+    this.continuousMs = 0;
+    this.port.postMessage({ type: 'speech_end' });
   }
 
   process(inputs) {
