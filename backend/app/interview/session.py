@@ -1357,9 +1357,21 @@ class InterviewRuntime:
                         await self.emit_audio(ev["pcm"])
 
                 elif kind == LC.EV_INPUT_TRANSCRIPT:
+                    # BUG (fixed): this used to emit only `ev["text"]` — the single
+                    # incremental fragment Gemini just streamed — instead of the
+                    # accumulated buffer, unlike the output-transcript branch below,
+                    # which already joins correctly. The frontend REPLACES a row's
+                    # text on every non-final update (it has no way to know a fragment
+                    # is partial), so each new word-or-two fragment overwrote the last,
+                    # and whatever fragment happened to arrive right before the turn
+                    # settled is the only thing a candidate ever saw — "just the last
+                    # word." Scoring was unaffected (it already read the joined
+                    # `_cand_buf` at flush time via _flush_candidate_turn); only the
+                    # live display was wrong.
                     self._cand_buf.append(ev["text"])
                     await self.emit({"type": "transcript", "speaker": "candidate",
-                                     "text": ev["text"], "final": False})
+                                     "text": "".join(self._cand_buf), "final": False,
+                                     "turn_id": getattr(self, "_open_cand_turn_id", "") or None})
 
                 elif kind == LC.EV_OUTPUT_TRANSCRIPT:
                     await self._open_persona_turn()

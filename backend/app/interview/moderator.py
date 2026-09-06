@@ -36,6 +36,10 @@ SCENARIO_TURN_COST = 3
 #: the ongoing rotation — see Moderator._next_unserved.
 INTRO_PERSONA = "hr"
 
+#: Consecutive R3 (vague-answer) fires the SAME speaker gets before the panel is forced
+#: to move on regardless — see the guard in decide()'s R3 branch.
+MAX_VAGUE_FOLLOWUPS = 2
+
 
 class Moderator:
     """Owns the floor, the difficulty bands, and the unresolved-flag store.
@@ -62,6 +66,12 @@ class Moderator:
         self.established: Dict[str, Any] = {"numbers": {}, "facts": []}
         self.history: List[Dict[str, Any]] = []      # decisions, for the trace panel
         self._impact_challenges = 0
+        # Consecutive R3 (vague-answer) fires for the SAME current speaker. Uncapped,
+        # a run of short/unclear answers — exactly what a bad connection or a mic issue
+        # produces — kept one persona (visibly, whoever opens the interview) asking
+        # every question for the rest of the session, since R3 never looked at how many
+        # times it had already fired. See MAX_VAGUE_FOLLOWUPS below.
+        self._vague_streak = 0
         # Role-play state (PS11 #6). `scenario` is None until R7 opens one, and is set
         # back to None when it closes so R7 cannot re-fire in the same interview.
         self.scenario: Optional[Any] = None
@@ -97,6 +107,10 @@ class Moderator:
     # -- state ingestion --------------------------------------------------
 
     def note_turn(self, persona: str) -> None:
+        # The floor genuinely moved to someone else: whatever vague-answer streak was
+        # building against the previous speaker no longer applies to this one.
+        if persona != self.current:
+            self._vague_streak = 0
         self.turns_by_persona[persona] = self.turns_by_persona.get(persona, 0) + 1
         self.current = persona
         if self.scenario is not None:
@@ -179,6 +193,12 @@ class Moderator:
         open_types = {f.get("type") for f in self.open_flags}
         cur = self.current or self.panel[0]
 
+        # A genuinely clear answer breaks any run of vague ones, regardless of who ends
+        # up with the floor next — otherwise a stale count could carry over into an
+        # unrelated later streak against the same persona.
+        if not (specificity == "vague" or "vague" in flag_types):
+            self._vague_streak = 0
+
         # R1 — a contradiction outranks everything: resolve it before moving on.
         if "contradiction" in flag_types or "contradiction" in open_types:
             f = next((f for f in self.open_flags if f.get("type") == "contradiction"), None)
@@ -202,7 +222,15 @@ class Moderator:
                 rule="R2")
 
         # R3 — vague: stay put and push for specifics rather than moving on politely.
-        if specificity == "vague" or "vague" in flag_types:
+        # Capped: an uncapped version of this rule kept re-selecting `cur` for every
+        # consecutive vague answer with no limit, and a run of short/unclear answers —
+        # exactly what a bad connection or a mic issue produces — meant one persona
+        # (visibly, whichever one opens the interview) ended up asking every question
+        # for the rest of the session. After MAX_VAGUE_FOLLOWUPS attempts with the same
+        # interviewer, fall through to the rules below (R4/R6/R7/R5) so the panel is
+        # guaranteed to keep moving regardless of how many more vague answers arrive.
+        if (specificity == "vague" or "vague" in flag_types) and self._vague_streak < MAX_VAGUE_FOLLOWUPS:
+            self._vague_streak += 1
             f = next((f for f in self.open_flags if f.get("type") == "vague"), None)
             return self._directive(cur, "followup", target_skill_id,
                                    reason="Answer was vague — press for specifics.",
