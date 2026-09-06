@@ -552,6 +552,47 @@ def test_thinking_is_disabled_on_the_live_session():
     assert "include_thoughts=False" in src
 
 
+def test_transcription_language_is_pinned_not_auto_detected():
+    """Reported bug: a candidate's own English answer showed up in the transcript as
+    a single character in an unrelated script. AudioTranscriptionConfig defaults to
+    automatic language detection when `language_codes` is omitted, and unclear/noisy
+    audio is exactly when a multilingual ASR model is most likely to guess a wrong
+    script instead of its best English interpretation. This app is English-only end
+    to end (personas, charters, UI, disclosure) — there is no candidate-language
+    feature here to trade away by pinning it."""
+    import inspect
+
+    from app.interview import live_client as LC
+
+    src = inspect.getsource(LC.GeminiLiveProvider.connect)
+    assert "input_audio_transcription=types.AudioTranscriptionConfig(language_codes=" in src
+    assert "output_audio_transcription=types.AudioTranscriptionConfig(language_codes=" in src
+
+
+def test_speech_config_does_not_pin_a_language_code():
+    """The natural first instinct (mine included) is to ALSO set
+    `speech_config.language_code` alongside the transcription language pin above, for
+    symmetry. Don't: confirmed directly against the real API that
+    gemini-2.5-flash-native-audio-preview-12-2025 rejects it outright --
+    `websockets.exceptions.ConnectionClosedError: received 1007 ... Unsupported
+    language code 'en' for model models/gemini-2.5-flash-native-audio-preview-12-2025`
+    -- which fails the live connection from opening at all, for every persona, for
+    every candidate. This shipped once, briefly, before a live capability check caught
+    it. The synthesized voice's own language was never the reported problem."""
+    import inspect
+
+    from app.interview import live_client as LC
+
+    src = inspect.getsource(LC.GeminiLiveProvider.connect)
+    speech_config_block = src.split("input_audio_transcription")[0]
+    code_lines = [ln for ln in speech_config_block.splitlines() if not ln.strip().startswith("#")]
+    offending = [ln for ln in code_lines if "language_code=" in ln]
+    assert not offending, (
+        "speech_config must not set language_code on this model -- it breaks the "
+        f"live connection outright, confirmed against the real API. Found: {offending}"
+    )
+
+
 def test_a_turn_always_settles_even_if_output_never_stops():
     from app.interview import session as RT
 

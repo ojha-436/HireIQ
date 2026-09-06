@@ -56,6 +56,74 @@
 > in this test environment, so this could not be re-verified against an actual suspended
 > context; it needs a real retest to confirm the warning/recovery path is ever actually
 > reached and that it resolves the silence.
+>
+> **Third field test:** progress — the AI's question now appeared correctly in English
+> and a candidate transcript entry finally appeared too (both earlier bugs resolved).
+> But the candidate's own English answer transcribed as a single unrelated character in
+> a different script, alongside the app's own "unstable network" warning firing (the
+> network-quality callback added earlier working as intended). Root cause, confirmed
+> against the installed SDK directly: `AudioTranscriptionConfig()` was called with no
+> arguments in both directions, and its `language_codes` field "defaults to automatic
+> language detection" when omitted (the SDK's own field description). Unclear or noisy
+> audio — exactly what an unstable connection produces — is precisely when a
+> multilingual ASR model is most likely to guess a wrong script rather than its best
+> English interpretation. Fixed by pinning `language_codes=["en-US"]` on both the input
+> and output transcription configs, and `speech_config.language_code="en"` alongside it
+> for the synthesized voice — this app is English-only end to end (personas, charters,
+> UI, disclosure), so there is no real "detect the candidate's language" feature here to
+> trade away. Covered by a source-inspection test matching this file's existing
+> `test_thinking_is_disabled_on_the_live_session` pattern. The underlying network
+> instability itself is the candidate's connection, not something this app can fix —
+> the warning banner is the honest signal for it.
+>
+> **Fourth field test:** two more, both diagnosable from the pasted transcript itself
+> rather than needing a live retest.
+>
+> (1) The candidate's own transcript line showed only a fragment ("I am ") followed by a
+> blank second "YOU" row, yet Donna's next question clearly referenced a full, detailed
+> answer ("your background in payments and streaming is quite interesting") — proof the
+> answer was heard and scored correctly and only the *live display* was broken.
+> `_pump()`'s `EV_INPUT_TRANSCRIPT` branch emitted only the newest incremental fragment
+> (`ev["text"]`) instead of the accumulated buffer, unlike `EV_OUTPUT_TRANSCRIPT` right
+> below it, which already joined `self._persona_buf[...]` correctly — a plain asymmetry
+> between the two nearly-identical branches. Fixed to join `"".join(self._cand_buf)` and
+> carry the open turn_id, matching the persona-side pattern exactly.
+>
+> (2) Donna asked both the opening question AND a clearly technical follow-up
+> ("how have you utilized Kafka") rather than handing off to the technical persona —
+> reported as "persona should ask one by one." `moderator.py`'s R3 (vague answer: press
+> the same speaker for specifics) had no cap on how many consecutive times it could
+> fire. A short/unclear answer (exactly what (1) or a real connection issue produces)
+> kept re-selecting whichever persona was already `cur` — visibly Donna, since she's
+> always `cur` for the very first exchange — with no limit. `MAX_VAGUE_FOLLOWUPS` (2)
+> now forces R3 to fall through to normal rotation after that many consecutive fires
+> against the same speaker, regardless of how many more vague answers arrive; a
+> genuinely clear answer resets the streak immediately. Both covered by direct
+> `Moderator`/`InterviewRuntime` unit tests (no field retest needed for either — both
+> are deterministic given the inputs, not dependent on real audio quality).
+>
+> **Pre-commit verification, requested explicitly before pushing any of the above:**
+> asked to confirm résumé/project-grounded questioning actually works. Direct testing of
+> `GeminiLiveProvider.connect()` against the real API turned up a critical regression in
+> the third field test's own fix (above): `speech_config.language_code="en"` is rejected
+> outright by `gemini-2.5-flash-native-audio-preview-12-2025` —
+> `ConnectionClosedError: ... 1007 ... Unsupported language code 'en' for model
+> models/gemini-2.5-flash-native-audio-preview-12-2025` — which fails the live
+> connection from opening at all, for every persona, for every candidate. This had not
+> yet been pushed. Removed just that line; `input_audio_transcription`/
+> `output_audio_transcription`'s `language_codes=["en-US"]` (the part that actually
+> fixed the reported bug) connects cleanly, confirmed for all six personas directly
+> against the real API. A guard test now locks in that `speech_config` must never set
+> `language_code` on this model.
+>
+> With the connection restored, ran the actual requested verification live: a candidate
+> profile with a named project ("migrated the payments pipeline to event-driven
+> microservices... Kafka") got a technical follow-up that named the project back
+> correctly — *"You mentioned migrating to event-driven microservices using Kafka for
+> the payments pipeline at Loopscale. Can you walk—"* — grounded in both what the
+> candidate just said and their stored skill list. Panel rotation, persona
+> self-introduction by name, and the full candidate answer in the transcript all
+> confirmed working together in the same run.
 
 # Agora + Gemini media-path audit
 

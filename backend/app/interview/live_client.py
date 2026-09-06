@@ -193,13 +193,32 @@ class GeminiLiveProvider(LiveVoiceProvider):
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
                     prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=persona.voice)
-                )
+                ),
+                # NOT language_code="en" here: this native-audio preview model rejects
+                # it outright — the live connection fails to open at all (1007
+                # "Unsupported language code 'en' for model
+                # models/gemini-2.5-flash-native-audio-preview-12-2025"), confirmed
+                # directly against the real API. Pinning the TRANSCRIPTION language
+                # below is what actually fixed the reported bug and IS accepted by
+                # this model; the synthesized voice's own language was never the
+                # problem and isn't worth the risk of breaking the connection outright
+                # if a future model version is equally strict about this field.
             ),
             # Both directions transcribed: input gives us the candidate's answer text for
             # the analyst and the transcript; output gives us the interviewer's words to
             # cite in the report.
-            input_audio_transcription=types.AudioTranscriptionConfig(),
-            output_audio_transcription=types.AudioTranscriptionConfig(),
+            #
+            # `language_codes` defaults to automatic language detection when omitted —
+            # confirmed the cause of a reported bug where a candidate's own English
+            # answer showed up in the transcript as a single unrelated character in a
+            # different script. Unclear or noisy audio is exactly when a
+            # multilingual ASR model is most likely to guess a wrong script rather than
+            # its best English interpretation; pinning the hint removes that failure
+            # mode without needing perfect audio. This interview is English-only end to
+            # end (personas, charters, UI, disclosure), so there is no real "detect the
+            # candidate's language" use case here to trade away.
+            input_audio_transcription=types.AudioTranscriptionConfig(language_codes=["en-US"]),
+            output_audio_transcription=types.AudioTranscriptionConfig(language_codes=["en-US"]),
             # NO THINKING. The 12-2025 native-audio model emits its reasoning into the
             # output transcript, and the candidate then hears it: "**Initiating The
             # Interview** I've begun by reviewing the candidate's profile [c1]...".
