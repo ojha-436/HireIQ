@@ -1342,7 +1342,15 @@ class InterviewRuntime:
                     # Also suppress audio when employer has taken over (takeover_active=True).
                     if persona_key == self.floor.current and not self.takeover_active:
                         await self._open_persona_turn()
-                        await self.emit_audio(ev["pcm"])
+                        # When Agora ConvoAI is active, that agent is already speaking this
+                        # same text into the Agora channel as a real participant (see
+                        # _flush_persona_turn's _convoai_speak call) — Gemini's own audio is
+                        # still generated (native-audio models produce audio and transcript
+                        # together, there is no text-only mode here) but sending it too would
+                        # double the candidate's TTS: two different vendors narrating the same
+                        # line a beat apart. Only one voice reaches the candidate.
+                        if not getattr(self, "_convoai", False):
+                            await self.emit_audio(ev["pcm"])
 
                 elif kind == LC.EV_INPUT_TRANSCRIPT:
                     self._cand_buf.append(ev["text"])

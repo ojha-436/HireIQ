@@ -1,13 +1,20 @@
-/* Interviewer audio playback + the Agora bot track (plan-v3.md §5.1).
+/* Interviewer audio playback (plan-v3.md §5.1).
 
    The server relays the model's speech over our own WebSocket as 24 kHz mono 16-bit
    PCM. This module:
      1. plays it for the candidate, gapless, by scheduling each chunk on a shared clock;
-     2. exposes a MediaStreamTrack of that same audio so the browser can publish it into
-        the Agora channel as the "AI Panel" participant;
-     3. can FLUSH instantly on barge-in.
+     2. can FLUSH instantly on barge-in.
 
-   (3) is the one that matters most. Gemini stops generating the moment the candidate
+   The AI's voice as an Agora channel participant does NOT route through here — it comes
+   from a genuinely separate Agora Conversational AI agent per persona
+   (backend/app/interview/agora_convoai.py), each with its own agent_rtc_uid, and is
+   subscribed and played directly by room.js like any other remote participant. Piping
+   this module's LOCAL playback back out as a second, candidate-identity-branded Agora
+   track was the earlier design and was never finished (a dead `attachAgora` hook); it
+   would also have meant the "AI participant" spoke under the candidate's own uid rather
+   than as a real distinct identity, which the ConvoAI-agent path gives for free.
+
+   (2) is the one that matters most. Gemini stops generating the moment the candidate
    speaks, but anything already scheduled would keep playing — the interviewer would
    talk over the candidate for a second after being interrupted, which reads as broken.
    So every scheduled source is tracked and stopped on flush. */
@@ -18,18 +25,11 @@ export class BotAudio {
     this.ctx = new (window.AudioContext || window.webkitAudioContext)();
     this.gain = this.ctx.createGain();
     this.gain.connect(this.ctx.destination);
-    // Second sink: a MediaStream Agora can publish as a custom audio track.
-    this.streamDest = this.ctx.createMediaStreamDestination();
-    this.gain.connect(this.streamDest);
 
     this.nextAt = 0;
     this.pending = new Set();
     this.speaking = false;
     this.onSpeakingChange = null;
-  }
-
-  get mediaStreamTrack() {
-    return this.streamDest.stream.getAudioTracks()[0] || null;
   }
 
   async resume() {

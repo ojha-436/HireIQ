@@ -34,7 +34,12 @@ export class InterviewRoom {
     this.audioSeen = false;
     this.mic = null;
     this.agora = null;
-    this.camTrack = null;
+    // Local tracks PUBLISHED into the Agora channel (candidate mic + camera). Distinct
+    // from `this.mic` (the AudioWorklet tap that feeds the WebSocket/Gemini path) and
+    // from `this._localStream` (the raw getUserMedia() stream) — three different
+    // consumers of the same hardware, torn down separately in destroy().
+    this.agoraMicTrack = null;
+    this.agoraCamTrack = null;
     // The raw getUserMedia() stream. Closing the AudioContext/mic worklet or leaving
     // Agora does NOT stop these tracks — that is what left the camera/mic hardware
     // (and the browser's in-use indicator) on after the interview ended.
@@ -54,12 +59,21 @@ export class InterviewRoom {
   async start() {
     this._renderShell();
     this._status('Connecting…');
+    // The socket is the interview — typed answers work over it alone. Microphone and
+    // camera are an enhancement layered on top, so a getUserMedia failure (permission
+    // denied, no device, another app holding the mic) must not take the whole room down
+    // with it: that left the candidate looking at a room that never connects at all, with
+    // no transcript and no way to answer even by typing, which reads as "the interview is
+    // stuck" rather than what it actually was — a mic the browser refused to hand over.
     try {
       await this.bot.resume();
+    } catch { /* best effort; playback still attempts inline as audio arrives */ }
+    this._openSocket();
+    try {
       await this._joinMedia();
-      this._openSocket();
     } catch (err) {
-      this._status(err.message || 'Could not start the interview', true);
+      this._voiceWarning('Your microphone isn’t available (' + (err.message || 'permission denied')
+        + '). You can still answer by typing below — this is scored exactly the same way.');
     }
   }
 
@@ -69,7 +83,12 @@ export class InterviewRoom {
     try { await this.mic?.stop?.(); } catch { /* not started */ }
     try { await this.bot.close(); } catch { /* not open */ }
     if (this.agora) {
-      try { this.camTrack?.close(); await this.agora.leave(); } catch { /* not joined */ }
+      try {
+        await this.agora.unpublish([this.agoraMicTrack, this.agoraCamTrack].filter(Boolean));
+      } catch { /* not published */ }
+      try { this.agoraMicTrack?.close(); } catch { /* already closed */ }
+      try { this.agoraCamTrack?.close(); } catch { /* already closed */ }
+      try { await this.agora.leave(); } catch { /* not joined */ }
     }
     this._releaseLocalMedia();
   }
@@ -124,8 +143,42 @@ export class InterviewRoom {
     if (info?.enabled && info?.app_id && window.AgoraRTC) {
       try {
         this.agora = window.AgoraRTC.createClient({ mode: 'rtc', codec: 'vp8' });
+
+        // Any AI voice arrives as a genuinely separate channel participant — an Agora
+        // Conversational AI agent (backend/app/interview/agora_convoai.py), one per
+        // persona, each with its own agent_rtc_uid — not as a second track republished
+        // under the candidate's own identity. Auto-subscribe and play whatever any
+        // remote participant publishes; today that is only ever a ConvoAI agent's TTS
+        // voice when AGORA_CUSTOMER_ID/SECRET are configured. Registered before join()
+        // so a fast-publishing agent can never race this handler.
+        this.agora.on('user-published', async (user, mediaType) => {
+          try {
+            await this.agora.subscribe(user, mediaType);
+            if (mediaType === 'audio') user.audioTrack?.play();
+          } catch { /* the agent may have already left; nothing to play */ }
+        });
+        // Surfaces the same way a Gemini/mic failure already does — a degraded Agora
+        // link should not fail silently while the candidate wonders why turns are slow.
+        this.agora.on('network-quality', (stats) => {
+          if (stats.downlinkNetworkQuality >= 4 || stats.uplinkNetworkQuality >= 4) {
+            this._voiceWarning('Your network connection looks unstable. If audio cuts '
+              + 'out, you can keep answering by typing below.');
+          }
+        });
+
         await this.agora.join(info.app_id, info.channel, info.token || null, info.uid);
-        this.bot.attachAgora?.(this.agora);
+
+        // Publish the SAME hardware tracks already captured above — never a second
+        // getUserMedia() call, which would prompt for permission twice and could grab a
+        // different device. A custom track just wraps the existing MediaStreamTrack.
+        const toPublish = [];
+        this.agoraMicTrack = window.AgoraRTC.createCustomAudioTrack({ mediaStreamTrack: audioTrack });
+        toPublish.push(this.agoraMicTrack);
+        if (videoTrack) {
+          this.agoraCamTrack = window.AgoraRTC.createCustomVideoTrack({ mediaStreamTrack: videoTrack });
+          toPublish.push(this.agoraCamTrack);
+        }
+        await this.agora.publish(toPublish);
       } catch {
         this.agora = null;   // media relay is optional; the interview proceeds regardless
       }
@@ -320,6 +373,11 @@ export class InterviewRoom {
     const q = (s) => this.root.querySelector(s);
     q('#mute-btn').onclick = () => {
       this.muted = !this.muted;
+      // Two separate audiences hear this mic: the WebSocket/Gemini path (gated in
+      // _sendBinary by `this.muted` already) and, when Agora is active, any other
+      // channel participant subscribed to the published track. Both must go quiet
+      // together, or muting reads as broken on whichever side keeps hearing you.
+      this.agoraMicTrack?.setEnabled(!this.muted);
       q('#mute-btn').replaceChildren(
         h('span', { html: icon('mic', 14) }), this.muted ? 'Unmute' : 'Mute');
       q('#mute-btn').setAttribute('aria-pressed', String(this.muted));
@@ -428,12 +486,28 @@ export class InterviewRoom {
   }
 
   _pushTurn(msg) {
+    // A late transcription tail is merged server-side into the SAME turn_id and re-sent
+    // already final — by the time it arrives, `last.final` from the first message is
+    // already true, so the old speaker+final heuristic alone would treat it as a brand
+    // new row and show the candidate's answer twice. Match on turn_id first when the
+    // message carries one; only streaming partial chunks (no turn_id yet) fall back to
+    // "still open" merging.
+    if (msg.turn_id) {
+      const existing = this.turns.find((t) => t.turn_id === msg.turn_id);
+      if (existing) {
+        existing.text = msg.text;
+        existing.final = msg.final;
+        this._renderTranscript();
+        return;
+      }
+    }
     const last = this.turns[this.turns.length - 1];
     if (last && last.speaker === msg.speaker && !last.final) {
       last.text = msg.text;
       last.final = msg.final;
+      if (msg.turn_id) last.turn_id = msg.turn_id;
     } else {
-      this.turns.push({ speaker: msg.speaker, text: msg.text, final: msg.final });
+      this.turns.push({ speaker: msg.speaker, text: msg.text, final: msg.final, turn_id: msg.turn_id });
     }
     this._renderTranscript();
   }
@@ -478,18 +552,31 @@ export class InterviewRoom {
   async _renderEnded(msg) {
     clearInterval(this._timer);
     await this.destroy();
+    // A practice session never has an employer on the other end of it — practice.py
+    // skips every employer side-effect and builds the report the moment the session
+    // ends. Telling a practising candidate their answers "go to the hiring team" is
+    // simply false, and pointing them at My applications instead of their own report
+    // sent them looking for feedback that was never going to show up there.
+    const isPractice = !!this.session?.is_practice;
     clear(this.root).append(h('div', { class: 'room-done force-dark' }, [
       h('div', { class: 'card card-pad col gap5', style: { maxWidth: '520px' } }, [
         h('span', { class: 'ai-badge' }, [h('span', { html: icon('activity', 12) }), 'AI interview']),
         h('h1', { class: 'display', style: { fontSize: 'var(--fs-28)' }, text: 'Interview complete' }),
         h('p', { class: 't2 fs13', text:
           `Thank you. You spoke for ${Math.round((msg.duration_s || 0) / 60)} minute(s) across ${msg.turns || 0} turns.` }),
-        // Scores are never shown to the candidate here: feedback is released by the
-        // employer after review, which is what stops candidates gaming later rounds.
-        h('p', { class: 'hint', text:
-          'Your assessment goes to the hiring team for review. When they release it, the feedback appears under My applications — every point in it links to what you actually said.' }),
-        h('a', { class: 'btn btn-primary', href: '#/candidate/applications', text: 'Back to my applications',
-          onClick: () => this.onExit() }),
+        // Scores are never shown to the candidate here for a HIRING session: feedback
+        // is released by the employer after review, which is what stops candidates
+        // gaming later rounds. A practice session has no such gate — the report is
+        // ready immediately.
+        h('p', { class: 'hint', text: isPractice
+          ? 'Your report and improvement plan are ready now — nothing here was shared with any employer.'
+          : 'Your assessment goes to the hiring team for review. When they release it, the feedback appears under My applications — every point in it links to what you actually said.' }),
+        h('a', {
+          class: 'btn btn-primary',
+          href: isPractice ? `#/candidate/practice/${this.sessionId}/report` : '#/candidate/applications',
+          text: isPractice ? 'See my report' : 'Back to my applications',
+          onClick: () => this.onExit(),
+        }),
       ]),
     ]));
   }

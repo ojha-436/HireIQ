@@ -198,11 +198,21 @@ export function monitorView({ id }) {
         setLive();
         speaking = ev.persona; renderRoster(); break;
       case 'transcript': {
-        const last = turns[turns.length - 1];
-        if (last && last.speaker === ev.speaker && !last.final) {
-          last.text = ev.text; last.final = ev.final;
+        // See room.js _pushTurn: a late transcription tail is merged server-side into
+        // the same turn_id and re-sent already final, so it must be matched by turn_id
+        // first or it shows up as a duplicate row once the first message already set
+        // `final: true`.
+        const existing = ev.turn_id && turns.find((t) => t.turn_id === ev.turn_id);
+        if (existing) {
+          existing.text = ev.text; existing.final = ev.final;
         } else {
-          turns.push({ speaker: ev.speaker, text: ev.text, final: ev.final });
+          const last = turns[turns.length - 1];
+          if (last && last.speaker === ev.speaker && !last.final) {
+            last.text = ev.text; last.final = ev.final;
+            if (ev.turn_id) last.turn_id = ev.turn_id;
+          } else {
+            turns.push({ speaker: ev.speaker, text: ev.text, final: ev.final, turn_id: ev.turn_id });
+          }
         }
         renderTranscript();
         break;
