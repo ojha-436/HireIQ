@@ -52,6 +52,7 @@ TTS_VENDOR = os.getenv("AGORA_TTS_VENDOR", "openai")
 #: One voice per persona, chosen for distinguishability — two similar voices make a
 #: panel sound like one person changing their mind.
 VOICE_MAP: dict[str, str] = {
+    "hr": "coral",              # clear, polished — the recruiter opening the call
     "tech": "onyx",             # deep, measured
     "product": "nova",          # bright, quick
     "hiring_manager": "echo",   # even, senior

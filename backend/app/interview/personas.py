@@ -52,16 +52,35 @@ PRECEDENCE: {precedence}
 
 class Persona(NamedTuple):
     key: str
-    label: str            # shown on the participant tile
-    voice: str            # Gemini Live prebuilt voice
-    charter: str          # persona delta on top of INVARIANTS
-    probes: List[str]     # rubric dimensions this persona scores
-    bot_uid: int          # stable Agora uid so tiles do not reshuffle between turns
+    name: str              # first name — spoken in the self-introduction, shown on the tile
+    role_title: str        # role shown alongside the name
+    voice: str             # Gemini Live prebuilt voice
+    charter: str           # persona delta on top of INVARIANTS
+    probes: List[str]      # rubric dimensions this persona scores
+    bot_uid: int           # stable Agora uid so tiles do not reshuffle between turns
+
+    @property
+    def label(self) -> str:
+        """Display string used everywhere a persona is shown or logged."""
+        return "{} · {}".format(self.name, self.role_title)
 
 
 PERSONAS: Dict[str, Persona] = {
+    "hr": Persona(
+        key="hr", name="Donna", role_title="HR Interviewer", voice="Zephyr", bot_uid=90000,
+        probes=[],
+        charter="""\
+You are DONNA, the HR host who opens this interview. Your only job is a warm, brief welcome
+before the rest of the panel takes over: introduce yourself by first name, put the candidate
+at ease, and ask ONE simple opening question in the spirit of "tell me a little about
+yourself and what drew you to this role." You are not evaluating technical skill, ownership
+or behaviour - that is the rest of the panel's job. Keep it short, human and conversational,
+the way a real recruiter opens a call. If you are handed the floor again later, stay equally
+brief and warm rather than turning into a second technical interviewer.""",
+    ),
     "tech": Persona(
-        key="tech", label="Technical Interviewer", voice="Charon", bot_uid=90001,
+        key="tech", name="Alex", role_title="Technical Interviewer", voice="Charon",
+        bot_uid=90001,
         probes=["correctness", "depth", "tradeoffs"],
         charter="""\
 You are the TECHNICAL interviewer. You care about whether the work was actually done and
@@ -70,7 +89,8 @@ testing. Your signature move is to push on scale: "Walk me through what happens 
 scales 100 times." Accept a good answer plainly and move deeper rather than praising it.""",
     ),
     "product": Persona(
-        key="product", label="Product Manager", voice="Kore", bot_uid=90002,
+        key="product", name="Mike", role_title="Product Manager", voice="Kore",
+        bot_uid=90002,
         probes=["impact", "prioritisation", "user_insight"],
         charter="""\
 You are the PRODUCT interviewer. A technically correct answer is not yet a good answer to
@@ -80,7 +100,8 @@ it change for the customer?" If the candidate answers only in technical terms, s
 ask again for the outcome.""",
     ),
     "hiring_manager": Persona(
-        key="hiring_manager", label="Hiring Manager", voice="Orus", bot_uid=90003,
+        key="hiring_manager", name="Peter", role_title="Hiring Manager", voice="Orus",
+        bot_uid=90003,
         probes=["ownership", "scope", "seniority"],
         charter="""\
 You are the HIRING MANAGER. You are calibrating seniority and separating what the candidate
@@ -89,7 +110,7 @@ and what they would do differently. Your signature move: "What was YOUR part of 
 specifically?" Be warm but hard to satisfy on specifics.""",
     ),
     "customer": Persona(
-        key="customer", label="Customer", voice="Aoede", bot_uid=90004,
+        key="customer", name="Zara", role_title="Customer", voice="Aoede", bot_uid=90004,
         probes=["clarity", "empathy", "expectation_setting"],
         charter="""\
 You are a CUSTOMER of the product, sitting in on the panel. You are not technical. You
@@ -98,7 +119,8 @@ work to a buyer and set honest expectations. Your signature move: "I don't follo
 jargon - explain it as if I'm the buyer." Stay friendly and a little impatient.""",
     ),
     "behavioural": Persona(
-        key="behavioural", label="Behavioural Interviewer", voice="Leda", bot_uid=90005,
+        key="behavioural", name="Sam", role_title="Behavioural Interviewer", voice="Leda",
+        bot_uid=90005,
         probes=["structure", "conflict", "self_awareness"],
         charter="""\
 You are the BEHAVIOURAL interviewer. You want situation, action and result - in that order
@@ -129,8 +151,8 @@ AI_DISCLOSURE = (
 # Spoken disclosure, required in the first persona's opening turn (plan-v3.md §5.5 layer 3).
 SPOKEN_DISCLOSURE_INSTRUCTION = (
     "This is the FIRST turn of the interview. Before your first question you must, in one "
-    "short sentence, introduce yourself by role and state clearly that you are an AI "
-    "interviewer. Then ask your opening question."
+    "short sentence, introduce yourself by first name and role and state clearly that you "
+    "are an AI interviewer. Then ask your opening question."
 )
 
 
@@ -147,8 +169,10 @@ def system_prompt(persona_key: str) -> str:
     p = get(persona_key)
     return (
         "{invariants}\n\n--- YOUR ROLE ---\n{charter}\n\n"
-        "Your spoken name on this panel is \"{label}\"."
-    ).format(invariants=INVARIANTS, charter=p.charter, label=p.label)
+        "Your name is {name} and your role on this panel is {role}. Introduce yourself by "
+        "first name, not by role title - a candidate meets \"Alex\", not \"the Technical "
+        "Interviewer\"."
+    ).format(invariants=INVARIANTS, charter=p.charter, name=p.name, role=p.role_title)
 
 
 # Panel proposal from the job's canonical required-skill IDs (plan-v3.md D7).
@@ -195,12 +219,17 @@ def propose_panel(required_skill_ids: List[str], job_title: str = "") -> List[st
         if k not in seen:
             seen.add(k)
             out.append(k)
-    return out[:4]
+    # A real interview opens with a person, not a technical probe: HR always speaks first,
+    # ahead of the substantive panel proposed above. It is a one-time welcome rather than a
+    # co-equal seat in the ongoing rotation (see Moderator._next_unserved).
+    return ["hr"] + out[:4]
 
 
-# Interview presets (plan-v3.md §R1).
+# Interview presets (plan-v3.md §R1). panel_size counts the HR opener as one of the seats,
+# so it is one higher than the number of SUBSTANTIVE interviewers on each preset — adding
+# the HR welcome must not come at the cost of dropping one of them.
 PRESETS: Dict[str, Dict[str, int]] = {
-    "screen": {"minutes": 12, "max_turns": 7, "panel_size": 2},
-    "panel":  {"minutes": 25, "max_turns": 14, "panel_size": 3},
+    "screen": {"minutes": 12, "max_turns": 7, "panel_size": 3},
+    "panel":  {"minutes": 25, "max_turns": 14, "panel_size": 4},
     "loop":   {"minutes": 40, "max_turns": 22, "panel_size": 5},
 }

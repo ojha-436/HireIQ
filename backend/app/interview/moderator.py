@@ -32,6 +32,10 @@ SCENARIO_MIN_SECONDS = 240
 #: Turns a role-play consumes, reserved before opening so it cannot run out mid-scene.
 SCENARIO_TURN_COST = 3
 
+#: The HR/intro persona (personas.py) opens every interview, but is not a co-equal seat in
+#: the ongoing rotation — see Moderator._next_unserved.
+INTRO_PERSONA = "hr"
+
 
 class Moderator:
     """Owns the floor, the difficulty bands, and the unresolved-flag store.
@@ -74,9 +78,17 @@ class Moderator:
         return sum(self.turns_by_persona.values())
 
     def _next_unserved(self) -> Optional[str]:
-        """The panel member furthest behind its share, in panel order."""
+        """The panel member furthest behind its share, in panel order.
+
+        The HR/intro persona is excluded here once it has opened the interview: its role
+        is a one-time warm welcome, not an equal seat in the substantive rotation. Without
+        this, every other panelist eventually catches up to its turn count and R5 hands the
+        floor back to small talk for the rest of the session.
+        """
         best, best_count = None, None
         for k in self.panel:
+            if k == INTRO_PERSONA and self.turns_by_persona.get(k, 0) > 0:
+                continue
             c = self.turns_by_persona.get(k, 0)
             if best_count is None or c < best_count:
                 best, best_count = k, c

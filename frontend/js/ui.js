@@ -216,11 +216,12 @@ export function debounce(fn, ms = 280) {
 }
 
 export const PERSONA_LABEL = {
-  tech: 'Technical Interviewer',
-  product: 'Product Manager',
-  hiring_manager: 'Hiring Manager',
-  customer: 'Customer',
-  behavioural: 'Behavioural',
+  hr: 'Donna · HR Interviewer',
+  tech: 'Alex · Technical Interviewer',
+  product: 'Mike · Product Manager',
+  hiring_manager: 'Peter · Hiring Manager',
+  customer: 'Zara · Customer',
+  behavioural: 'Sam · Behavioural Interviewer',
 };
 
 export const personaChip = (key) =>

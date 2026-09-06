@@ -264,6 +264,7 @@
   content: ''; width: 7px; height: 7px; border-radius: 50%;
   background: currentColor; flex: none;
 }
+.p-hr             { color: var(--p-hr); }
 .p-tech           { color: var(--p-tech); }
 .p-product        { color: var(--p-product); }
 .p-hiring_manager { color: var(--p-hm); }

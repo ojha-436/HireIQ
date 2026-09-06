@@ -241,7 +241,8 @@ def _tone(freq_hz: float, ms: int, rate: int = OUTPUT_SAMPLE_RATE, amp: float = 
     return bytes(out)
 
 
-_VOICE_FREQ = {"Charon": 196.0, "Kore": 262.0, "Orus": 220.0, "Aoede": 330.0, "Leda": 294.0}
+_VOICE_FREQ = {"Charon": 196.0, "Kore": 262.0, "Orus": 220.0, "Aoede": 330.0, "Leda": 294.0,
+               "Zephyr": 349.0}
 
 
 class _LocalConnection(LiveConnection):
@@ -250,6 +251,11 @@ class _LocalConnection(LiveConnection):
     the whole browser audio path are exercisable offline and in CI."""
 
     _LINES: Dict[str, List[str]] = {
+        "hr": [
+            "Hi, I'm Donna, an AI interviewer here to kick things off. Tell me a little "
+            "about yourself and what drew you to this role?",
+            "Thanks for sharing that. I'll hand you over to the rest of the panel now.",
+        ],
         "tech": [
             "I'm an AI technical interviewer. Walk me through the hardest part of that project.",
             "Understood. What happens when that scales a hundred times?",
