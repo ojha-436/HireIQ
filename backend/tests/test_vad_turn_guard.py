@@ -36,6 +36,24 @@ def _run(coro):
     return asyncio.run(coro)
 
 
+def _run_until_settled(rt, coro):
+    """Run `coro`, then drain the turn-decision task it schedules.
+
+    `on_speech_end` no longer awaits `_advance_turn` inline. It waits for the tail of
+    the candidate's transcription and then runs the analyst — seconds of work — and
+    doing that inline parked the WebSocket read loop, so the transport stopped
+    answering the browser's keepalive pings and dropped the candidate mid-answer with
+    a 1011. The decision now runs in `_settle_task`, which means a test that asserts
+    on it has to wait for it rather than assume it already happened.
+    """
+    async def go():
+        await coro
+        task = getattr(rt, "_settle_task", None)
+        if task is not None:
+            await asyncio.wait_for(task, timeout=5)
+    return asyncio.run(go())
+
+
 def test_speech_end_in_the_gap_is_ignored_and_clears_the_buffer():
     """Neither awaiting the candidate nor mid persona-turn: a stray VAD cycle here is
     room noise, not an answer."""
@@ -57,7 +75,7 @@ def test_speech_end_during_the_candidates_real_turn_still_advances():
     rt._advance_turn = AsyncMock()
     rt._awaiting_candidate = True
 
-    _run(rt.on_speech_end())
+    _run_until_settled(rt, rt.on_speech_end())
 
     rt._advance_turn.assert_awaited_once()
 
@@ -70,7 +88,7 @@ def test_speech_end_mid_barge_in_still_advances():
     rt._advance_turn = AsyncMock()
     rt._persona_turn_open = True
 
-    _run(rt.on_speech_end())
+    _run_until_settled(rt, rt.on_speech_end())
 
     rt._advance_turn.assert_awaited_once()
 
