@@ -477,3 +477,59 @@ transport changes stay entirely inside the Agora/BotAudio/room.js layer and the 
 that would move them — this was an inspection.** The one number stated with confidence
 (5.7 s of deliberate settle-window waiting) is arithmetic on constants already in the
 repository, not a measurement from a live run, and is called out as such.
+
+---
+
+## 8. Field-test update — 2026-09-06: event-loop blocking + turn-latency instrumentation
+
+Real credentials, three-turn text-driven practice interview (no live microphone in this
+environment — see limitation below).
+
+**Bugs found and fixed**, both in `_advance_turn()` (`session.py`):
+1. `_offer_scenario()`'s DB lookup (`SC.pick`, a real SQLAlchemy query) ran synchronously
+   ON the event loop instead of via `asyncio.to_thread`, unlike `_db()` right next to it
+   in the same file. Re-fired on every turn until a scenario candidate was found.
+2. `Moderator.decide()`'s R0 tiebreak path can make a real, synchronous
+   `client.models.generate_content()` call (`gemini.generate_json`), and `_advance_turn`
+   awaited `decide()` directly with nothing off-loading it.
+
+Neither bug merely delayed the one interview waiting on it — an inline synchronous call
+blocks the asyncio event loop for the WHOLE PROCESS, stalling every other concurrently-
+running interview's `_pump()` task (i.e. its audio delivery) too. This is a plausible
+root cause for the "Agora connection stalled" symptom from the earlier field test: what
+looked like a flaky network could have been the server's own event loop wedged on a
+synchronous call for a different candidate's turn. Both fixed via `asyncio.to_thread`,
+proven non-blocking by a canary-coroutine test (`test_realtime_loop_not_blocked.py`) that
+fails if the event loop is ever starved during a deliberately slow stand-in call.
+
+**Turn-latency instrumentation added** — one `[latency]` line per turn breaking it into
+`speech_end->first_audio`, `prompt_sent->first_audio`, and the analyst's own share. First
+gotcha: uvicorn's stdout is a pipe under a real process manager, not a tty — Python
+block-buffers a plain `print()` to a pipe, so the line never appeared until `flush=True`
+was added. Worth remembering for any future print-based diagnostic in this codebase.
+
+**Real numbers, this test** (typed answers — see limitation):
+
+| Turn | Persona | Gemini prompt->first-audio | Analyst call |
+|---|---|---|---|
+| 1 (opening) | hr | 7110 ms (cold Gemini Live handshake) | n/a |
+| 2 | tech | 2436 ms | **9407 ms** |
+| 3 | product | 3392 ms | **5282 ms** |
+
+The bottleneck is not Agora and not Gemini Live's own audio generation — it is the
+analyst's own Gemini call, 2-4x longer than the Gemini Live turn it gates. Candidate-
+perceived silence between finishing an answer and hearing the next question ran
+~8.7-11.8 s against the <1.5 s target, almost entirely the analyst call, NOT fixed here.
+
+**Confirmed still working, live**: consent flow, 4 ConvoAI agents joined, résumé-grounded
+questioning (Alex named "Loopscale" and the migration specifically), R2 (a technically
+correct no-impact answer correctly handed tech -> product, and Mike's question named the
+exact detail), and post-interview report/scoring generation.
+
+**Limitation**: no real microphone in this environment — `speech_end->first_audio` is
+unmeasured here (`-1` throughout, since a typed answer bypasses VAD's `on_speech_end`
+entirely). Needs a real human mic test to fill that number in.
+
+**Not fixed here, flagged for a follow-up**: the analyst-latency bottleneck above. Making
+it faster without a live test to verify against is exactly the kind of blind change this
+audit's own methodology argues against.

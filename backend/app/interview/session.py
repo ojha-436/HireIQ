@@ -249,6 +249,16 @@ class InterviewRuntime:
         self._cand_buf: List[str] = []
         self._persona_buf: Dict[str, List[str]] = {}
         self._cand_turn_started_ms = 0
+        # Turn-latency instrumentation (candidate speech_end -> first AI audio). See
+        # on_speech_end, _advance_turn, _grant_floor and _pump's EV_AUDIO branch — this
+        # was completely absent before, which made "is the delay Gemini, the analyst,
+        # or our own orchestration?" unanswerable from anything but a stopwatch.
+        # None, not 0, means "not recorded yet" — _ms() legitimately returns 0 in the
+        # first instant of a session, and that must not be mistaken for "unset".
+        self._turn_t_speech_end_ms: Optional[int] = None
+        self._turn_t_analyst_ms = -1
+        self._turn_t_prompt_sent_ms: Optional[int] = None
+        self._turn_first_audio_pending = False
         # True between the model's first output of a turn and its turn_complete. Used to
         # close the candidate's turn at the right moment — see _open_persona_turn().
         self._persona_turn_open = False
@@ -808,6 +818,8 @@ class InterviewRuntime:
         # the interviewer is still talking is not silently dropped.
         self._capture_allowed = False
         await self._close_activity()
+        self._turn_t_prompt_sent_ms = self._ms()
+        self._turn_first_audio_pending = True
         await conn.send_text(prompt, end_of_turn=True)
         self._capture_allowed = True
 
@@ -1054,6 +1066,7 @@ class InterviewRuntime:
             self._cand_buf = []
             self._cand_turn_started_ms = 0
             return
+        self._turn_t_speech_end_ms = self._ms()
         self._capture_allowed = False
         await self._close_activity()
         # Settle, then score — INLINE, on the socket's receive loop.
@@ -1150,11 +1163,20 @@ class InterviewRuntime:
 
     # -- the moderated turn cycle -----------------------------------------
 
-    def _offer_scenario(self) -> None:
+    async def _offer_scenario(self) -> None:
         """Tell the moderator which persona could run a role-play, if any.
 
         The moderator is a pure function of its own state, so the DB lookup happens
         here and only the resulting persona key crosses the boundary.
+
+        This used to run `work()` inline on the event loop — a real synchronous
+        SQLAlchemy query, re-fired on every `_advance_turn()` call until a scenario
+        candidate was found. That does not just add latency to THIS interview's next
+        AI response: an inline DB call blocks the asyncio event loop for the whole
+        process, stalling every `_pump()` task (i.e. audio delivery) for every OTHER
+        concurrently-running interview too. `asyncio.to_thread` is what the rest of
+        this file already uses for the same reason (see `_db`) — this was simply
+        missed here.
         """
         if self.mod.scenario is not None or self.mod.scenario_done:
             return
@@ -1177,7 +1199,7 @@ class InterviewRuntime:
                 db.close()
 
         try:
-            self._scenario_candidate = work()
+            self._scenario_candidate = await asyncio.to_thread(work)
         except Exception as exc:  # noqa: BLE001 — a scenario must never end an interview
             # Logged, not swallowed: a blanket silent except here already hid an
             # AttributeError once, and the only symptom was R7 quietly never firing.
@@ -1197,6 +1219,7 @@ class InterviewRuntime:
         if self.deciding or self.ended:
             return
         self.deciding = True
+        self._turn_t_analyst_ms = -1
         # Close the window immediately: from here until the next persona turn opens (or
         # this call re-opens it below on empty input), a stray VAD cycle is not the
         # candidate's turn to interrupt.
@@ -1241,6 +1264,7 @@ class InterviewRuntime:
                 await self._grant_floor(w_directive["next_speaker"], directive=w_directive)
                 return
 
+            _t_analyst_start = self._ms()
             analysis = await asyncio.to_thread(
                 AN.analyse,
                 answer=cand["text"], persona=self.mod.current or self.panel[0],
@@ -1250,6 +1274,7 @@ class InterviewRuntime:
                 required_skill_names=self._required_names(),
                 recent=self._recent_transcript(3),
             )
+            self._turn_t_analyst_ms = self._ms() - _t_analyst_start
             # Stamp the skill this answer was probed for; the report attributes per-skill
             # scores from it, and without it the learning write-through has nothing to key on.
             analysis["target_skill_id"] = target
@@ -1258,8 +1283,15 @@ class InterviewRuntime:
 
             # Give the moderator the option before it chooses. R7 can then fire on its
             # own terms, or not at all — the runtime never forces a role-play.
-            self._offer_scenario()
-            directive = self.mod.decide(analysis, target_skill_id=target)
+            await self._offer_scenario()
+            # `decide()` is a plain sync method (tests call it directly with no event
+            # loop running), but its R0 tiebreak path can make a real, synchronous
+            # `client.models.generate_content` call (see Moderator._tiebreak / gemini.
+            # generate_json). Calling it inline here — as this used to — blocked the
+            # event loop for the duration of that network call, same failure mode as
+            # the _offer_scenario bug above: it would stall audio delivery for every
+            # concurrently-running interview, not just delay this one's next question.
+            directive = await asyncio.to_thread(self.mod.decide, analysis, target_skill_id=target)
 
             # R7 selected a role-play: promote the candidate scenario to live state.
             if (directive.get("rule") == "R7" and self.mod.scenario is None
@@ -1355,6 +1387,28 @@ class InterviewRuntime:
                         # ConvoAI's Agora voice, if it also gets through, is a second voice
                         # rather than the only one — worse than silence.
                         await self.emit_audio(ev["pcm"])
+                        if self._turn_first_audio_pending:
+                            # One line per turn, not per chunk: this is the first audible
+                            # byte of the response, which is the number that actually
+                            # matters (spec: "candidate speech end -> first AI audio").
+                            self._turn_first_audio_pending = False
+                            now = self._ms()
+                            prompt_to_audio = (now - self._turn_t_prompt_sent_ms
+                                              if self._turn_t_prompt_sent_ms is not None else -1)
+                            speech_end_to_audio = (now - self._turn_t_speech_end_ms
+                                                  if self._turn_t_speech_end_ms is not None else -1)
+                            print(
+                                "[latency] session={} persona={} "
+                                "speech_end->first_audio={}ms prompt_sent->first_audio={}ms "
+                                "analyst={}ms".format(
+                                    self.session_id, persona_key, speech_end_to_audio,
+                                    prompt_to_audio, self._turn_t_analyst_ms),
+                                # Uvicorn's stdout is a pipe, not a tty, under a real
+                                # process manager — block-buffered by default, which
+                                # means an unflushed print can sit invisible for
+                                # minutes. This line exists to be watched live.
+                                flush=True)
+                            self._turn_t_speech_end_ms = None
 
                 elif kind == LC.EV_INPUT_TRANSCRIPT:
                     # BUG (fixed): this used to emit only `ev["text"]` — the single
