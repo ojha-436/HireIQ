@@ -32,6 +32,13 @@ EV_INTERRUPTED = "interrupted"          # candidate barged in; stop playback now
 EV_TURN_COMPLETE = "turn_complete"      # model finished its turn
 EV_ERROR = "error"                      # {'detail': str}
 
+#: Prefix of the silent-turn nudge instruction session.py sends when the candidate's
+#: turn produced no transcribed words (session.py `_nudge_silence`). A real Gemini
+#: connection just reads it as an instruction like any other `send_text` call; the
+#: offline `_LocalConnection` below matches on it so a nudge gets its own short reply
+#: instead of advancing the persona's normal canned-line cycle — see the note there.
+NUDGE_MARKER = "The candidate said nothing that could be transcribed."
+
 
 class LiveConnection:
     """One persona's live audio channel. Exactly one connection holds the floor."""
@@ -283,21 +290,34 @@ class _LocalConnection(LiveConnection):
         ],
     }
 
+    #: Generic, persona-agnostic replies for a silent-turn nudge. Deliberately separate
+    #: from `_LINES`: reusing that cycle meant a SECOND nudge (the candidate's spoken
+    #: answer never transcribes at all under this offline stand-in — see send_audio)
+    #: wrapped back to index 0 and repeated the persona's opening line verbatim, which
+    #: reads as the panel talking to itself in a loop rather than a real interviewer.
+    _NUDGE_LINES: List[str] = [
+        "Still there? Take your time, and go ahead whenever you're ready.",
+        "No rush — if it's easier, you can type your answer instead.",
+    ]
+
     def __init__(self, persona_key: str) -> None:
         self.persona_key = persona_key
         self._queue: "asyncio.Queue[Dict[str, Any]]" = asyncio.Queue()
         self._turn = 0
+        self._nudge_turn = 0
         self._closed = False
         self._heard = 0
         self._freq = _VOICE_FREQ.get(P.get(persona_key).voice, 220.0)
 
     async def send_audio(self, pcm16: bytes) -> None:
         # Track that we received audio so the fallback only "answers" after real input.
+        # NOTE: this stand-in never transcribes it (there is no real STT here) — a
+        # candidate who only ever speaks, never types, will always look silent to it.
         self._heard += len(pcm16)
 
     async def send_text(self, text: str, end_of_turn: bool = True) -> None:
         if end_of_turn:
-            await self._speak()
+            await self._speak(nudge=text.startswith(NUDGE_MARKER))
 
     async def signal_activity_start(self) -> None:
         return None
@@ -307,12 +327,16 @@ class _LocalConnection(LiveConnection):
         # sends a directive (send_text) — mirroring the manual-activity Gemini config.
         return None
 
-    async def _speak(self) -> None:
+    async def _speak(self, nudge: bool = False) -> None:
         if self._closed:
             return
-        lines = self._LINES.get(self.persona_key) or ["Tell me more about that."]
-        line = lines[self._turn % len(lines)]
-        self._turn += 1
+        if nudge:
+            line = self._NUDGE_LINES[self._nudge_turn % len(self._NUDGE_LINES)]
+            self._nudge_turn += 1
+        else:
+            lines = self._LINES.get(self.persona_key) or ["Tell me more about that."]
+            line = lines[self._turn % len(lines)]
+            self._turn += 1
         self._heard = 0
         await self._queue.put({"type": EV_OUTPUT_TRANSCRIPT, "text": line})
         # One tone burst per ~12 characters, so longer lines "speak" for longer.

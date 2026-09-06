@@ -1095,7 +1095,7 @@ class InterviewRuntime:
         self._capture_allowed = False
         await self._close_activity()
         await conn.send_text(
-            "The candidate said nothing that could be transcribed. In ONE short sentence, "
+            LC.NUDGE_MARKER + " In ONE short sentence, "
             "invite them to answer — or, if this is the second time, tell them they can "
             "type their answer instead. Do not repeat your question verbatim and do not "
             "comment on the silence at length.",
