@@ -185,7 +185,8 @@ export function healthKpiView() {
       clear(host).append(
         h('div', { class: 'card card-pad col', style: { maxWidth: '560px' } }, [
           statusRow('Database', h_.database.connected, h_.database.connected ? `connected (${h_.database.engine})` : 'unreachable'),
-          statusRow('Gemini (AI interviewers + scoring)', h_.gemini_configured, h_.gemini_configured ? h_.gemini_live_model : 'not configured — offline fallback active'),
+          statusRow('Gemini — interviewers (native audio)', h_.gemini_configured, h_.gemini_configured ? h_.gemini_live_model : 'not configured — offline fallback active'),
+          statusRow('Gemini — scoring & reports', h_.gemini_configured, h_.gemini_configured ? (h_.gemini_text_model || 'unknown') : 'not configured — deterministic scoring only'),
           statusRow('Agora RTC (voice/video)', h_.agora_rtc_configured, h_.agora_rtc_configured ? 'configured' : 'not configured'),
           statusRow('Agora ConvoAI (voice agents)', h_.agora_convoai_configured, h_.agora_convoai_configured ? 'configured' : 'not configured'),
           h('div', { class: 'row-between', style: { padding: 'var(--s3) 0' } }, [

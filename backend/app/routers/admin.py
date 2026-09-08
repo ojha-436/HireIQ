@@ -133,6 +133,11 @@ def health(
         "database": {"connected": db_ok, "engine": "sqlite" if settings.is_sqlite else "postgres"},
         "gemini_configured": bool(settings.gemini_api_key),
         "gemini_live_model": settings.gemini_live_model,
+        # Two DIFFERENT models, and the page used to print only the first while
+        # claiming it covered scoring as well. The interviewers speak and listen on
+        # the native-audio Live model; the analyst, the report and the moderator
+        # tiebreak are text calls on their own model.
+        "gemini_text_model": settings.gemini_model,
         "agora_rtc_configured": bool(settings.agora_app_id and settings.agora_app_certificate),
         "agora_convoai_configured": bool(settings.agora_customer_id and settings.agora_customer_secret),
         "live_interview_sessions": RT.live_count(),
