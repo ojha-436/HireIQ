@@ -74,7 +74,11 @@ MAX_SILENT_NUDGES = 2
 #: How long the moderator will wait for the Gemini analyst before falling back to the
 #: deterministic one. Every second here is dead air between the candidate finishing and
 #: the panel replying, so it is a latency budget, not a timeout for correctness.
-ANALYST_BUDGET_S = float(os.getenv("INTERVIEW_ANALYST_BUDGET_S", "4.0"))
+#: Post-interview re-score budgets. The candidate has already left, so these are
+#: generous — but still bounded, because a report that never arrives is worse than one
+#: built on the deterministic analysis.
+RESCORE_PER_TURN_S = float(os.getenv("INTERVIEW_RESCORE_PER_TURN_S", "25"))
+RESCORE_TOTAL_S = float(os.getenv("INTERVIEW_RESCORE_TOTAL_S", "90"))
 
 
 #: RMS below which a 16-bit PCM frame counts as room tone rather than speech.
@@ -503,6 +507,11 @@ class InterviewRuntime:
         duration = int(time.monotonic() - self.started_at)
         await _db(self._mark_ended, duration)
         asyncio.create_task(self._stop_recording(), name="iv-recording-stop")
+
+        # The interview routed on the deterministic scorer to keep turns fast. Now that
+        # nobody is waiting, let the model score every answer properly — the report is
+        # built from these rows, so this is what puts its judgement into the assessment.
+        await self._rescore_for_report()
 
         report = None
         try:
@@ -1319,34 +1328,29 @@ class InterviewRuntime:
                 await self._grant_floor(w_directive["next_speaker"], directive=w_directive)
                 return
 
-            # The analyst is a Gemini text call and it sits on the critical path: the
-            # moderator cannot choose who speaks next until the answer is scored. It is
-            # usually a couple of seconds, but it has been measured at 13.4s, and every
-            # one of those seconds is silence the candidate is sitting through.
+            # Scoring is OFF the interview's critical path.
             #
-            # So it is bounded. Past the deadline the deterministic analyst decides the
-            # routing instead — same shape, same fields, no network — and the interview
-            # keeps moving. That is strictly better than a correct score nobody waited
-            # for, and `analyse_local` is the fallback the engine already ships for the
-            # no-API-key case, so this path is exercised rather than theoretical.
+            # The moderator needs an analysis to choose who speaks next, but it only
+            # reads `scores`, `flags`, `specificity`, `impact_stated` and
+            # `claims_unsupported` — every one of which the deterministic analyst
+            # computes locally, with no network. The Gemini analyst was adding between
+            # 3.6 and 13.4 seconds of silence to EVERY turn to produce a richer score
+            # that nothing in the live loop actually reads.
+            #
+            # So the interview routes on the local scorer, and the model re-scores every
+            # answer in one pass once the interview is over (`_rescore_for_report`),
+            # where it costs the candidate nothing. Adaptivity is unchanged — the same
+            # rules fire on the same flags — and the assessment keeps the model's
+            # judgement, because the report is built after the re-score, not before.
             _t_analyst_start = self._ms()
-            _analyst_kwargs = dict(
+            analysis = await asyncio.to_thread(
+                AN.analyse_local,
                 answer=cand["text"], persona=self.mod.current or self.panel[0],
                 turn_id=cand["turn_id"], target_skill_id=target,
                 claims=self.grounding.get("claims") or [],
                 established=self.mod.established,
                 required_skill_names=self._required_names(),
             )
-            try:
-                analysis = await asyncio.wait_for(
-                    asyncio.to_thread(AN.analyse, recent=self._recent_transcript(3),
-                                      **_analyst_kwargs),
-                    timeout=ANALYST_BUDGET_S,
-                )
-            except asyncio.TimeoutError:
-                print("analyst exceeded {}s; routing on the deterministic scorer".format(
-                    ANALYST_BUDGET_S))
-                analysis = await asyncio.to_thread(AN.analyse_local, **_analyst_kwargs)
             self._turn_t_analyst_ms = self._ms() - _t_analyst_start
             # Stamp the skill this answer was probed for; the report attributes per-skill
             # scores from it, and without it the learning write-through has nothing to key on.
@@ -1418,6 +1422,59 @@ class InterviewRuntime:
         from app.engines import datasets as ds
         return [ds.SKILL_NAME[s] for s in (self.grounding.get("required_skill_ids") or [])
                 if s in ds.SKILL_NAME]
+
+    async def _rescore_for_report(self) -> None:
+        """Re-analyse every candidate answer with the model, after the interview.
+
+        Never fatal and always bounded: a slow or failed re-score leaves the
+        deterministic analysis in place, which is a complete analysis in its own right —
+        the report degrades in nuance, not in structure, and never in citation, because
+        evidence is quoted from the transcript either way.
+        """
+        if not GEM.available():
+            return
+
+        def load(db) -> List[Dict[str, Any]]:
+            rows = (db.query(InterviewTurn)
+                      .filter(InterviewTurn.session_id == self.session_id,
+                              InterviewTurn.speaker == "candidate")
+                      .order_by(InterviewTurn.seq).all())
+            return [{"id": t.id, "text": t.text or "",
+                     "target": (t.analysis_json or {}).get("target_skill_id")} for t in rows]
+
+        try:
+            turns = await _db(load)
+        except Exception as exc:  # noqa: BLE001
+            print("rescore: could not load turns: {}".format(exc))
+            return
+        if not turns:
+            return
+
+        async def one(t: Dict[str, Any]) -> None:
+            try:
+                analysis = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        AN.analyse, answer=t["text"], persona=self.panel[0],
+                        turn_id=t["id"], target_skill_id=t.get("target"),
+                        claims=self.grounding.get("claims") or [],
+                        established=self.mod.established,
+                        required_skill_names=self._required_names(),
+                    ), timeout=RESCORE_PER_TURN_S)
+            except Exception:  # noqa: BLE001 — keep the local analysis for this turn
+                return
+            analysis["target_skill_id"] = t.get("target")
+            try:
+                await _db(self._save_analysis, t["id"], analysis)
+            except Exception as exc:  # noqa: BLE001
+                print("rescore: could not save {}: {}".format(t["id"], exc))
+
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*(one(t) for t in turns)), timeout=RESCORE_TOTAL_S)
+            print("rescored {} answer(s) for the report".format(len(turns)))
+        except asyncio.TimeoutError:
+            print("rescore exceeded {}s; report uses the deterministic analysis".format(
+                RESCORE_TOTAL_S))
 
     def _save_analysis(self, db, turn_id: str, analysis: Dict[str, Any]) -> None:
         row = db.query(InterviewTurn).filter(InterviewTurn.id == turn_id).first()
