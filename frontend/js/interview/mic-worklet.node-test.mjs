@@ -148,6 +148,37 @@ function loudFrame(n = 128, amplitude = 0.03) {
   assert(mic.speaking === true, 'sustained speech must still interrupt');
 }
 
+// --- THE REPORTED BUG: a noisy room must still end the turn on its own ----------
+// "whenever I stop speaking they still show Listening ... every time I had to hit
+// I'm done answering". END_RMS was absolute at 0.010. In a room whose ambient level
+// sits above that — a fan, an AC, traffic — the signal never falls under it, so the
+// turn only ever ended via the 20-second safety valve or the button.
+{
+  const mic = new CapturedClass();
+  const events = [];
+  mic.port = { postMessage: (m) => events.push(m), onmessage: null };
+
+  const framesPerSec = Math.ceil(1000 / ((128 / 48000) * 1000));
+  // Two seconds of a noisy-but-quiet room: ambient 0.014, above the old END_RMS.
+  for (let i = 0; i < framesPerSec * 2; i++) mic._vad(loudFrame(128, 0.014));
+  assert(mic.speaking === false, 'ambient alone must not open a turn');
+
+  // The candidate answers, clearly above the room.
+  for (let i = 0; i < framesPerSec * 3 && !mic.speaking; i++) mic._vad(loudFrame(128, 0.09));
+  assert(mic.speaking === true, 'a real answer must open a turn in a noisy room');
+  for (let i = 0; i < framesPerSec * 2; i++) mic._vad(loudFrame(128, 0.09));
+
+  // They stop. The room is still at 0.014 — ABOVE the old absolute END_RMS of 0.010.
+  const before = events.filter((e) => e.type === 'speech_end').length;
+  for (let i = 0; i < framesPerSec * 2; i++) mic._vad(loudFrame(128, 0.014));
+
+  assert(mic.speaking === false,
+    'the turn MUST end when the candidate stops, even though the room never goes under '
+    + 'the old fixed END_RMS -- this is the "I always have to press the button" bug');
+  assert(events.filter((e) => e.type === 'speech_end').length === before + 1,
+    'exactly one speech_end when they stopped talking');
+}
+
 if (process.exitCode) {
   console.error('mic-worklet VAD regression test FAILED');
 } else {

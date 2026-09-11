@@ -30,6 +30,30 @@ const START_RMS = 0.018;      // ~-35 dBFS: above typical room noise, below quie
 const END_RMS = 0.010;        // lower bar to stay open, so pauses mid-sentence don't cut
 const HANG_MS = 700;          // silence before we call the turn over
 const MIN_SPEECH_MS = 250;    // ignore coughs, clicks and door slams
+
+/* ADAPTIVE NOISE FLOOR.
+
+   END_RMS is an absolute threshold, and that is the bug candidates actually feel: in a
+   room whose ambient level sits above 0.010 — a fan, an air conditioner, traffic, an
+   open-plan office — the signal NEVER falls under it, so the turn never closes on its
+   own. The tile sits on "YOU ARE SPEAKING", the panel waits, and the candidate has to
+   reach for "I'm done answering" after every single answer. MAX_SPEECH_MS eventually
+   rescues it, twenty seconds later, which is the "it takes forever to reply" report.
+
+   So the close threshold follows the room. The floor is learned ONLY while the
+   candidate is not speaking — during an answer it is frozen, so a long steady answer
+   cannot raise the bar out from under itself — and the turn ends when the level falls
+   back to near that floor. In a quiet room this is still END_RMS; in a noisy one it is
+   whatever quiet actually sounds like there. */
+const FLOOR_MULT = 2.0;       // "back to ambient" = twice the learned floor
+const FLOOR_FALL = 0.05;      // learn a quieter room in well under a second
+//: Frames are ~2.7ms, so this is a time constant of roughly thirteen seconds. It has to
+//: be that slow: anything quicker and a few seconds of speech leaking in before the
+//: turn opens drags the floor up with it, and then nothing can ever clear the bar.
+const FLOOR_RISE = 0.0002;
+//: A hard ceiling. Past this the room is too loud to do energy detection in at all, and
+//: letting the floor chase it would silently make the microphone unusable.
+const FLOOR_MAX = 0.05;
 // Safety valve: the only way out of `speaking` above is the RMS staying under END_RMS
 // for HANG_MS straight. A candidate whose room's ambient noise floor sits at or above
 // END_RMS (a fan, AC, traffic, room echo) never produces a quiet enough gap, so
@@ -81,6 +105,7 @@ class MicCapture extends AudioWorkletProcessor {
     this.muted = false;
     this.speaking = false;
     this.botSpeaking = false;    // set from the main thread while playback is audible
+    this.noiseFloor = END_RMS;   // learned from the room between answers
     this.silentMs = 0;
     this.speechMs = 0;
     this.continuousMs = 0;
@@ -115,7 +140,14 @@ class MicCapture extends AudioWorkletProcessor {
 
     if (!this.speaking) {
       // Speaker bleed only has to be rejected while there is something to bleed.
-      const startBar = this.botSpeaking ? ECHO_START_RMS : START_RMS;
+      // Learn the room only while nobody is talking into it.
+      this.noiseFloor = Math.min(FLOOR_MAX, rms < this.noiseFloor
+        ? (1 - FLOOR_FALL) * this.noiseFloor + FLOOR_FALL * rms
+        : (1 - FLOOR_RISE) * this.noiseFloor + FLOOR_RISE * rms);
+
+      const startBar = this.botSpeaking
+        ? Math.max(ECHO_START_RMS, this.noiseFloor * 3)
+        : Math.max(START_RMS, this.noiseFloor * 2.5);
       const needMs = this.botSpeaking ? ECHO_MIN_SPEECH_MS : MIN_SPEECH_MS;
       if (rms > startBar) {
         this.speechMs += ms;
@@ -132,7 +164,9 @@ class MicCapture extends AudioWorkletProcessor {
     }
 
     this.continuousMs += ms;
-    if (rms < END_RMS) {
+    // Frozen for the duration of the answer — see FLOOR_MULT above.
+    const endBar = Math.max(END_RMS, this.noiseFloor * FLOOR_MULT);
+    if (rms < endBar) {
       this.silentMs += ms;
       if (this.silentMs >= HANG_MS) {
         this._endSpeech();
