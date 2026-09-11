@@ -173,7 +173,12 @@ export class InterviewRoom {
         stream = await navigator.mediaDevices.getUserMedia({
           audio: { echoCancellation: this.audioPrefs.echoCancellation,
                    noiseSuppression: this.audioPrefs.noiseSuppression,
-                   autoGainControl: true, channelCount: 1 },
+                   // NO autoGainControl. It rides the gain up through a quiet passage,
+                   // which lifts the noise floor above the VAD's close threshold: the
+                   // turn never ends on its own, "YOU ARE SPEAKING" sticks, and the
+                   // panel does not reply until the 20-second safety valve fires. That
+                   // is the voice-mode latency candidates were feeling.
+                   channelCount: 1 },
           video: true,
         });
       } catch {

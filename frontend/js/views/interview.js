@@ -126,7 +126,7 @@ export function interviewGate({ id }) {
           const stream = await navigator.mediaDevices.getUserMedia({
             audio: { echoCancellation: audioPrefs.echoCancellation,
                      noiseSuppression: audioPrefs.noiseSuppression,
-                     autoGainControl: true, channelCount: 1 },
+                     channelCount: 1 },
             video: true,
           });
           media = { stream };
