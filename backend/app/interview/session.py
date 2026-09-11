@@ -1046,11 +1046,24 @@ class InterviewRuntime:
             asyncio.create_task(self._convoai_interrupt(), name="iv-convoai-interrupt")
         # The candidate cut in, so whatever the persona had said IS its turn. Settle it
         # now rather than after the quiet window, or a barge-in loses the partial turn.
+        # You cannot interrupt something you have not heard.
+        #
+        # A persona turn opens on its first TEXT, which arrives before — sometimes well
+        # before — its first audio. A candidate in a noisy room, or on speakers, trips
+        # the VAD in that window and the turn was killed before it made a single sound:
+        # no audio ever reached the browser, the room showed "the interviewers' voice is
+        # not coming through", and the panel never got a word out. Nothing the candidate
+        # says in that window can be a response to a line they have not heard, so it is
+        # not a barge-in and must not settle the turn.
+        heard_any = int(getattr(self, "_audio_bytes", 0) or 0) > 0
         self._cancel_pending_flush()
-        if self._persona_turn_open and self.floor.current:
+        if self._persona_turn_open and self.floor.current and heard_any:
             self._truncate_to_heard(self.floor.current)
             await self._flush_persona_turn(self.floor.current)
             self._persona_turn_open = False
+        elif self._persona_turn_open:
+            print("ignoring barge-in: {} has not been heard yet".format(self.floor.current))
+            return                      # let the interviewer finish getting a word out
         await self.emit({"type": "interrupted", "reason": "candidate_speaking"})
 
     async def on_speech_end(self, deliberate: bool = False) -> None:

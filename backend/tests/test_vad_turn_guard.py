@@ -209,3 +209,38 @@ def test_barely_heard_line_is_dropped_rather_than_left_as_an_ellipsis():
     rt = _rt_with_turn(line, audio_bytes=48 * 10_000, heard_ms=200)
     rt._truncate_to_heard("tech")
     assert "".join(rt._persona_buf["tech"]) == ""
+
+
+def test_barge_in_before_any_audio_does_not_kill_the_turn():
+    """Reported live: the panel never made a sound and the room warned that the
+    interviewers' voice was not coming through.
+
+    A persona turn opens on its first TEXT, which lands before its first audio. A noisy
+    room trips the VAD in that window, and the turn was settled before a single byte of
+    speech was emitted — so the candidate heard nothing, every time. Nothing said in
+    that window can be a reply to an unheard line.
+    """
+    rt = _runtime()
+    rt._persona_turn_open = True
+    rt.floor.current = "tech"
+    rt._audio_bytes = 0                     # nothing has been heard yet
+    rt._flush_persona_turn = AsyncMock()
+
+    _run(rt.on_speech_start())
+
+    rt._flush_persona_turn.assert_not_awaited()
+    assert rt._persona_turn_open is True, "the interviewer must be left to finish"
+
+
+def test_barge_in_after_audio_still_settles_the_turn():
+    rt = _runtime()
+    rt._persona_turn_open = True
+    rt.floor.current = "tech"
+    rt._audio_bytes = 48 * 2000             # two seconds were audible
+    rt._flush_persona_turn = AsyncMock()
+    rt.emit = AsyncMock()
+
+    _run(rt.on_speech_start())
+
+    rt._flush_persona_turn.assert_awaited_once()
+    assert rt._persona_turn_open is False
