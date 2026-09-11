@@ -55,7 +55,19 @@ const MAX_SPEECH_MS = 20000;
    higher bar and sustain it for longer. Real speech from the person in the room is far
    louder than speaker bleed; echo residue is not. */
 const ECHO_START_RMS = 0.075;   // ~4x the quiet-room threshold
-const ECHO_MIN_SPEECH_MS = 450; // and it must persist, not just spike
+
+/* How long speech must persist to CUT OFF an interviewer who is mid-sentence.
+
+   "Hmm", "mm-hm", "right", a laugh, a throat-clear — these are backchannel, the noises
+   a person makes to show they are still listening. At 450ms they cleared the bar and
+   stopped the interviewer dead, so acknowledging a question cancelled it. Interrupting
+   someone is a deliberate act and reads as one: it takes about a second of continuous
+   speech before a listener accepts that you have taken the floor. A real answer clears
+   this comfortably; a filler never does.
+
+   This gates INTERRUPTION only. When it is already the candidate's turn the normal
+   MIN_SPEECH_MS applies, so answering stays as responsive as it ever was. */
+const ECHO_MIN_SPEECH_MS = 1000;
 
 class MicCapture extends AudioWorkletProcessor {
   constructor() {

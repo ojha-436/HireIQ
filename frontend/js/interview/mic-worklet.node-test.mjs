@@ -128,6 +128,26 @@ function loudFrame(n = 128, amplitude = 0.03) {
     'once nothing is playing, normal-volume speech must open a turn as before');
 }
 
+// --- backchannel must not cut off an interviewer -------------------------------
+// "Hmm", "right", a laugh: these are how a listener signals they are still there, and
+// they used to stop the interviewer mid-question. Interrupting is a deliberate act.
+{
+  const mic = new CapturedClass();
+  mic.port = { postMessage: () => {}, onmessage: null };
+  mic.botSpeaking = true;
+
+  // Loud enough to be real speech, but only ~600ms of it: a filler, not an answer.
+  const framesFor600ms = Math.ceil(600 / ((128 / 48000) * 1000));
+  for (let i = 0; i < framesFor600ms; i++) mic._vad(loudFrame(128, 0.12));
+  assert(mic.speaking === false,
+    'a short backchannel ("hmm") must not interrupt an interviewer mid-sentence');
+
+  // Keep going into answer territory and it does take the floor.
+  const framesFor1500ms = Math.ceil(1500 / ((128 / 48000) * 1000));
+  for (let i = 0; i < framesFor1500ms && !mic.speaking; i++) mic._vad(loudFrame(128, 0.12));
+  assert(mic.speaking === true, 'sustained speech must still interrupt');
+}
+
 if (process.exitCode) {
   console.error('mic-worklet VAD regression test FAILED');
 } else {

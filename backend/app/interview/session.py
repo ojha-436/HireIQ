@@ -53,7 +53,7 @@ TURN_MAX_S = float(os.getenv("INTERVIEW_TURN_MAX_S", "12"))
 #: and became a second, orphaned candidate turn, while the analyst flagged the
 #: truncated first half `vague` and dropped correctness to 1. Same debounce idea as
 #: TURN_SETTLE_S, applied to the other direction.
-CAND_SETTLE_S = float(os.getenv("INTERVIEW_CAND_SETTLE_S", "2.5"))
+CAND_SETTLE_S = float(os.getenv("INTERVIEW_CAND_SETTLE_S", "1.4"))
 
 #: Ceiling on that wait. This runs on the socket's receive loop, so it is also the
 #: budget for how long the server can go without reading a frame: too generous and the
@@ -70,6 +70,11 @@ CAND_FIRST_WORD_S = float(os.getenv("INTERVIEW_CAND_FIRST_WORD_S", "3.0"))
 #: How many consecutive silent turns still earn a spoken nudge before the panel stops
 #: asking. Prevents a broken microphone turning into an endless loop of prompting.
 MAX_SILENT_NUDGES = 2
+
+#: How long the moderator will wait for the Gemini analyst before falling back to the
+#: deterministic one. Every second here is dead air between the candidate finishing and
+#: the panel replying, so it is a latency budget, not a timeout for correctness.
+ANALYST_BUDGET_S = float(os.getenv("INTERVIEW_ANALYST_BUDGET_S", "4.0"))
 
 
 #: RMS below which a 16-bit PCM frame counts as room tone rather than speech.
@@ -821,7 +826,16 @@ class InterviewRuntime:
         self._turn_t_prompt_sent_ms = self._ms()
         self._turn_first_audio_pending = True
         await conn.send_text(prompt, end_of_turn=True)
-        self._capture_allowed = True
+        # Capture stays SHUT until this persona is actually audible.
+        #
+        # Room noise clears the speech floor in plenty of real rooms. With capture open
+        # it opened a Gemini activity window, and under manual activity detection the
+        # model will not speak while it believes the user is mid-utterance — so the
+        # interviewer went silent, the turn settled with zero bytes, and the room
+        # reported that the interviewers' voice was not coming through. Nothing is lost
+        # by waiting: the candidate cannot be answering a line that has not started, and
+        # `_after_persona_turn` re-opens capture even if the turn produces no audio at
+        # all, so a silent persona can never lock the candidate out.
 
     def _turn_prompt(self, persona_key: str, first_turn: bool,
                      directive: Optional[Dict[str, Any]]) -> str:
@@ -1305,16 +1319,34 @@ class InterviewRuntime:
                 await self._grant_floor(w_directive["next_speaker"], directive=w_directive)
                 return
 
+            # The analyst is a Gemini text call and it sits on the critical path: the
+            # moderator cannot choose who speaks next until the answer is scored. It is
+            # usually a couple of seconds, but it has been measured at 13.4s, and every
+            # one of those seconds is silence the candidate is sitting through.
+            #
+            # So it is bounded. Past the deadline the deterministic analyst decides the
+            # routing instead — same shape, same fields, no network — and the interview
+            # keeps moving. That is strictly better than a correct score nobody waited
+            # for, and `analyse_local` is the fallback the engine already ships for the
+            # no-API-key case, so this path is exercised rather than theoretical.
             _t_analyst_start = self._ms()
-            analysis = await asyncio.to_thread(
-                AN.analyse,
+            _analyst_kwargs = dict(
                 answer=cand["text"], persona=self.mod.current or self.panel[0],
                 turn_id=cand["turn_id"], target_skill_id=target,
                 claims=self.grounding.get("claims") or [],
                 established=self.mod.established,
                 required_skill_names=self._required_names(),
-                recent=self._recent_transcript(3),
             )
+            try:
+                analysis = await asyncio.wait_for(
+                    asyncio.to_thread(AN.analyse, recent=self._recent_transcript(3),
+                                      **_analyst_kwargs),
+                    timeout=ANALYST_BUDGET_S,
+                )
+            except asyncio.TimeoutError:
+                print("analyst exceeded {}s; routing on the deterministic scorer".format(
+                    ANALYST_BUDGET_S))
+                analysis = await asyncio.to_thread(AN.analyse_local, **_analyst_kwargs)
             self._turn_t_analyst_ms = self._ms() - _t_analyst_start
             # Stamp the skill this answer was probed for; the report attributes per-skill
             # scores from it, and without it the learning write-through has nothing to key on.
@@ -1428,6 +1460,9 @@ class InterviewRuntime:
                         # ConvoAI's Agora voice, if it also gets through, is a second voice
                         # rather than the only one — worse than silence.
                         await self.emit_audio(ev["pcm"])
+                        # First audible byte: the candidate now has something to
+                        # interrupt, so their microphone may open an activity window.
+                        self._capture_allowed = True
                         if self._turn_first_audio_pending:
                             # One line per turn, not per chunk: this is the first audible
                             # byte of the response, which is the number that actually
