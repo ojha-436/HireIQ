@@ -1082,8 +1082,14 @@ class InterviewRuntime:
         # words still buffered is the candidate rescuing an answer the VAD missed, and
         # discarding that is the bug.
         deliberate_with_content = deliberate and bool("".join(self._cand_buf).strip())
+        # Same rule as on_speech_start: a persona turn that has not yet been HEARD is
+        # not something the candidate can be answering, so a VAD close inside that
+        # window must not end it either. Without this the noise opens and closes turns
+        # in a loop and the interviewer never gets a sound out.
+        persona_audible = (self._persona_turn_open
+                           and int(getattr(self, "_audio_bytes", 0) or 0) > 0)
         if (not deliberate_with_content
-                and not (self._awaiting_candidate or self._persona_turn_open)):
+                and not (self._awaiting_candidate or persona_audible)):
             # Same gap as on_speech_start. This VAD cycle never should have opened, so
             # closing it must not persist whatever it captured as a candidate turn —
             # that is what previously turned a noise burst into a duplicate transcript
