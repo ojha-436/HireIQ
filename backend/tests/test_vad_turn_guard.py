@@ -81,12 +81,17 @@ def test_speech_end_during_the_candidates_real_turn_still_advances():
 
 
 def test_speech_end_mid_barge_in_still_advances():
-    """persona_turn_open=True means the candidate genuinely interrupted a live
-    interviewer turn — speech_end there must still hand the floor back to the
-    moderator, even though `_awaiting_candidate` is False during a persona's turn."""
+    """persona_turn_open=True AND audible means the candidate genuinely interrupted a
+    live interviewer turn — speech_end there must still hand the floor back to the
+    moderator, even though `_awaiting_candidate` is False during a persona's turn.
+
+    The audibility half matters: a turn that has produced text but no sound yet has not
+    been heard, so a VAD close inside that window is room noise, not an answer.
+    """
     rt = _runtime()
     rt._advance_turn = AsyncMock()
     rt._persona_turn_open = True
+    rt._audio_bytes = 48 * 2000          # two seconds of it were actually audible
 
     _run_until_settled(rt, rt.on_speech_end())
 
@@ -244,3 +249,21 @@ def test_barge_in_after_audio_still_settles_the_turn():
 
     rt._flush_persona_turn.assert_awaited_once()
     assert rt._persona_turn_open is False
+
+
+def test_speech_end_before_the_interviewer_is_audible_is_ignored():
+    """The other half of the reported "no voice" bug.
+
+    A persona turn opens on its first TEXT, before its first audio. A noisy room trips
+    the VAD closed inside that window; running the turn decision there restarts the
+    interviewer before it has made a sound, and it loops — the candidate hears nothing
+    at all and the room reports the voice is not coming through.
+    """
+    rt = _runtime()
+    rt._advance_turn = AsyncMock()
+    rt._persona_turn_open = True
+    rt._audio_bytes = 0                  # nothing has been heard yet
+
+    _run_until_settled(rt, rt.on_speech_end())
+
+    rt._advance_turn.assert_not_awaited()
