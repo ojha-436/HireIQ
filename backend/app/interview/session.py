@@ -1017,7 +1017,14 @@ class InterviewRuntime:
             # talks to an interviewer that cannot hear a word. Two guards keep that
             # safety net from misfiring: never across the moment a persona is prompted
             # (`_capture_allowed`), and never on room tone (`_carries_speech`).
-            if self._capture_allowed and _carries_speech(pcm16):
+            # While an interviewer is mid-turn, raw microphone ENERGY must not open an
+            # activity window. Under manual activity detection the model stops speaking
+            # the moment it believes the user has started, so room noise cut interviewers
+            # off mid-sentence — they would get a few words out and stop. A real barge-in
+            # still works: it arrives as an explicit speech_start from the browser, which
+            # has already cleared the echo threshold and the one-second hold, and
+            # on_speech_start opens the window itself.
+            if self._capture_allowed and not self._persona_turn_open and _carries_speech(pcm16):
                 self._speech_frames = getattr(self, "_speech_frames", 0) + 1
                 await self._ensure_activity_open()
             await conn.send_audio(pcm16)
