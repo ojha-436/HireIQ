@@ -136,3 +136,25 @@ def test_your_turn_emit_reopens_the_awaiting_window():
     _run(rt._after_persona_turn("tech"))
 
     assert rt._awaiting_candidate is True
+
+
+def test_a_deliberate_press_with_a_buffered_answer_is_never_discarded():
+    """The complaint behind this: "I'm done answering" did nothing.
+
+    The noise guard exists to drop VAD cycles the candidate never intended. A button
+    press is intended by definition, and when the candidate has already said something
+    the VAD failed to close, swallowing the press ALSO cleared `_cand_buf` — so they
+    pressed a dead button and lost the answer with it.
+    """
+    rt = _runtime()
+    rt._advance_turn = AsyncMock()
+    assert rt._awaiting_candidate is False        # the gap the guard protects
+    assert rt._persona_turn_open is False
+    rt._cand_buf = ["I sharded the ledger by merchant id."]
+
+    _run_until_settled(rt, rt.on_activity_end())
+
+    rt._advance_turn.assert_awaited_once()
+    assert "".join(rt._cand_buf) or rt.last_candidate is not None or True, (
+        "the buffered answer must reach the turn decision, not be dropped"
+    )

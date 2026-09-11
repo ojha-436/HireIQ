@@ -1052,17 +1052,31 @@ class InterviewRuntime:
             self._persona_turn_open = False
         await self.emit({"type": "interrupted", "reason": "candidate_speaking"})
 
-    async def on_speech_end(self) -> None:
+    async def on_speech_end(self, deliberate: bool = False) -> None:
         """The browser's VAD heard the candidate stop. This — not the model — is what ends
-        the candidate's turn, and it is where the moderator gets to choose who answers."""
+        the candidate's turn, and it is where the moderator gets to choose who answers.
+
+        `deliberate` marks an explicit "I'm done answering" press. The noise guard below
+        exists to throw away VAD cycles the candidate never intended; a button press is
+        by definition intended, so it must not be thrown away with them.
+        """
         if self.ended:
             return
-        if not (self._awaiting_candidate or self._persona_turn_open):
+        # A deliberate press only escapes the guard when there is actually something to
+        # submit. Pressing it in the gap with an empty buffer would manufacture a turn
+        # out of nothing and draw a spurious "take your time" nudge; pressing it with
+        # words still buffered is the candidate rescuing an answer the VAD missed, and
+        # discarding that is the bug.
+        deliberate_with_content = deliberate and bool("".join(self._cand_buf).strip())
+        if (not deliberate_with_content
+                and not (self._awaiting_candidate or self._persona_turn_open)):
             # Same gap as on_speech_start. This VAD cycle never should have opened, so
             # closing it must not persist whatever it captured as a candidate turn —
             # that is what previously turned a noise burst into a duplicate transcript
             # entry AND an extra, unwanted moderator decision (the two combined are what
             # produced a merged double-question interviewer turn).
+            # Only a VAD cycle's own capture is discarded here. A deliberate press that
+            # reached this point had nothing buffered anyway, so there is nothing to lose.
             self._cand_buf = []
             self._cand_turn_started_ms = 0
             return
@@ -1151,8 +1165,15 @@ class InterviewRuntime:
                 return
 
     async def on_activity_end(self) -> None:
-        """Explicit "Let me finish" / send button — same path as VAD end-of-turn."""
-        await self.on_speech_end()
+        """Explicit "I'm done answering" press — the VAD path, minus the noise guard.
+
+        Routing this through the plain VAD path meant a press landing in the gap between
+        "the moderator decided" and "the next persona started talking" was silently
+        swallowed AND took the candidate's buffered answer with it (`_cand_buf` is
+        cleared by that guard). The candidate saw a dead button and lost what they had
+        just said. An explicit press is always a real end-of-turn.
+        """
+        await self.on_speech_end(deliberate=True)
 
     async def on_text(self, text: str) -> None:
         """Typed answer — accessibility path, and how tests drive a turn without audio."""
