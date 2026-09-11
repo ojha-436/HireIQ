@@ -107,7 +107,7 @@ export class BotAudio {
   }
 }
 
-/* Mic → 16 kHz PCM frames + voice-activity events. Returns { stop(), setMuted() }.
+/* Mic → 16 kHz PCM frames + voice-activity events. Returns { stop(), setMuted(), setBotSpeaking() }.
    `onFrame` receives an ArrayBuffer of int16 samples, ready to send as-is.
    `onVoice` receives 'speech_start' | 'speech_end' — the worklet decides end-of-turn
    because the moderator, not the model, must choose who answers (see mic-worklet.js). */
@@ -135,6 +135,7 @@ export async function captureMic(mediaStreamTrack, onFrame, workletUrl, onVoice)
 
   return {
     sampleRate: ctx.sampleRate,
+    setBotSpeaking(v) { node.port.postMessage({ type: 'bot-speaking', value: !!v }); },
     setMuted(v) { node.port.postMessage({ type: 'mute', value: !!v }); },
     async stop() {
       try { node.port.onmessage = null; source.disconnect(); node.disconnect(); } catch (_) {}

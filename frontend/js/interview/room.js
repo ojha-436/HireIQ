@@ -36,7 +36,12 @@ export class InterviewRoom {
     // Floor and voice are different facts. The floor comes from the server; whether
     // sound is actually playing is only knowable here. Conflating them is what made
     // the room show a talking interviewer in silence.
-    this.bot.onSpeakingChange = (audible) => this._setAudible(audible);
+    this.bot.onSpeakingChange = (audible) => {
+      this._setAudible(audible);
+      // Tell the mic the interviewer is audible, so speaker bleed cannot be mistaken
+      // for a barge-in. Without this the panel interrupts itself on laptop speakers.
+      try { this.mic?.setBotSpeaking?.(audible); } catch { /* mic not up yet */ }
+    };
     this.audible = false;
     this.audioSeen = false;
     this.mic = null;
@@ -167,7 +172,8 @@ export class InterviewRoom {
       try {
         stream = await navigator.mediaDevices.getUserMedia({
           audio: { echoCancellation: this.audioPrefs.echoCancellation,
-                   noiseSuppression: this.audioPrefs.noiseSuppression, channelCount: 1 },
+                   noiseSuppression: this.audioPrefs.noiseSuppression,
+                   autoGainControl: true, channelCount: 1 },
           video: true,
         });
       } catch {

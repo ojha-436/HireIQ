@@ -125,7 +125,8 @@ export function interviewGate({ id }) {
         try {
           const stream = await navigator.mediaDevices.getUserMedia({
             audio: { echoCancellation: audioPrefs.echoCancellation,
-                     noiseSuppression: audioPrefs.noiseSuppression, channelCount: 1 },
+                     noiseSuppression: audioPrefs.noiseSuppression,
+                     autoGainControl: true, channelCount: 1 },
             video: true,
           });
           media = { stream };
@@ -174,6 +175,11 @@ export function interviewGate({ id }) {
           h('span', { class: 'chip' }, [h('span', { html: icon('file', 13) }), ' Type your answers']),
         ]),
         h('p', { class: 'hint', text: 'You can switch at any point during the interview.' }),
+        // Echo cancellation reduces speaker bleed; headphones remove it. On laptop
+        // speakers the mic hears the interviewers, which used to read as the candidate
+        // interrupting them — so this is worth saying before they start, not after.
+        h('p', { class: 'hint', text: 'Headphones are recommended. On speakers, the '
+          + 'interviewers can be picked up by your microphone.' }),
       ]),
 
       h('div', { class: 'consent-answer-mode' }, [

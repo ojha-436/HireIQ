@@ -42,6 +42,21 @@ const MIN_SPEECH_MS = 250;    // ignore coughs, clicks and door slams
 // split by this back into one transcript row.
 const MAX_SPEECH_MS = 20000;
 
+/* ECHO GATE.
+
+   A candidate on laptop speakers hears the interviewer through the room, and the mic
+   hears it back. Browser AEC attenuates that but does not remove it, so the residue
+   crossed START_RMS and the panel interrupted ITSELF: an interviewer was cut off 819ms
+   into a 5-second greeting, its own voice was transcribed as the candidate's answer
+   (arriving as "..." and as fragments of other languages), and the turn restarted —
+   over and over, pushing speech-end-to-reply past twenty seconds.
+
+   While the interviewer is actually audible, a genuine barge-in has to clear a much
+   higher bar and sustain it for longer. Real speech from the person in the room is far
+   louder than speaker bleed; echo residue is not. */
+const ECHO_START_RMS = 0.075;   // ~4x the quiet-room threshold
+const ECHO_MIN_SPEECH_MS = 450; // and it must persist, not just spike
+
 class MicCapture extends AudioWorkletProcessor {
   constructor() {
     super();
@@ -53,12 +68,16 @@ class MicCapture extends AudioWorkletProcessor {
     this.outLen = 0;
     this.muted = false;
     this.speaking = false;
+    this.botSpeaking = false;    // set from the main thread while playback is audible
     this.silentMs = 0;
     this.speechMs = 0;
     this.continuousMs = 0;
     this.frameMs = 0;
     this.port.onmessage = (e) => {
       if (e.data && e.data.type === 'mute') this.muted = !!e.data.value;
+      // Whether the interviewer is audible RIGHT NOW. Only opening a turn is gated on
+      // it; closing one never is, or an echo-triggered turn could never end.
+      if (e.data && e.data.type === 'bot-speaking') this.botSpeaking = !!e.data.value;
     };
   }
 
@@ -83,9 +102,12 @@ class MicCapture extends AudioWorkletProcessor {
     const ms = (ch.length / sampleRate) * 1000;
 
     if (!this.speaking) {
-      if (rms > START_RMS) {
+      // Speaker bleed only has to be rejected while there is something to bleed.
+      const startBar = this.botSpeaking ? ECHO_START_RMS : START_RMS;
+      const needMs = this.botSpeaking ? ECHO_MIN_SPEECH_MS : MIN_SPEECH_MS;
+      if (rms > startBar) {
         this.speechMs += ms;
-        if (this.speechMs >= MIN_SPEECH_MS) {
+        if (this.speechMs >= needMs) {
           this.speaking = true;
           this.silentMs = 0;
           this.continuousMs = 0;

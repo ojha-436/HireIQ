@@ -90,6 +90,44 @@ function loudFrame(n = 128, amplitude = 0.03) {
   assert(speechEndCount === 1, `expected exactly one speech_end from the quiet pause, got ${speechEndCount}`);
 }
 
+// --- ECHO GATE: speaker bleed must not be mistaken for a barge-in -------------
+// Reported live: a candidate on laptop speakers had the panel interrupt ITSELF 819ms
+// into a 5-second greeting. The mic heard the interviewer through the room, the VAD
+// opened a turn, and the interviewer's own voice was transcribed as the candidate's
+// answer. Below-echo-threshold audio must be ignored WHILE the panel is audible, and
+// must still open a turn the moment it stops.
+{
+  const mic = new CapturedClass();
+  const events = [];
+  mic.port = { postMessage: (m) => events.push(m), onmessage: null };
+  mic.botSpeaking = true;
+
+  // 0.03 clears START_RMS (0.018) but not ECHO_START_RMS (0.075): this is bleed.
+  for (let i = 0; i < 400; i++) mic._vad(loudFrame(128, 0.03));
+  assert(mic.speaking === false,
+    'speaker bleed must NOT open a turn while the interviewer is audible '
+    + '-- this is the self-interruption bug');
+  assert(!events.some((e) => e.type === 'speech_start'),
+    'no speech_start should be emitted for echo residue');
+
+  // Someone actually talking in the room is far louder, and still gets through.
+  for (let i = 0; i < 400 && !mic.speaking; i++) mic._vad(loudFrame(128, 0.12));
+  assert(mic.speaking === true,
+    'a genuine loud barge-in must still interrupt the panel');
+}
+
+// --- and the same bleed DOES open a turn once the panel goes quiet -------------
+{
+  const mic = new CapturedClass();
+  const events = [];
+  mic.port = { postMessage: (m) => events.push(m), onmessage: null };
+  mic.botSpeaking = false;
+
+  for (let i = 0; i < 400 && !mic.speaking; i++) mic._vad(loudFrame(128, 0.03));
+  assert(mic.speaking === true,
+    'once nothing is playing, normal-volume speech must open a turn as before');
+}
+
 if (process.exitCode) {
   console.error('mic-worklet VAD regression test FAILED');
 } else {
