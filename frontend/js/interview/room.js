@@ -240,9 +240,12 @@ export class InterviewRoom {
     if (voiceOn) {
       // Barge-in: kill playback locally the moment the candidate speaks, and tell
       // the server so the persona stops generating too. Symmetric, sub-200ms.
+      // Read how much was heard BEFORE flushing — flush() resets the counters — so the
+      // server can trim the persona's turn to what the candidate actually got.
+      const heardMs = this.bot.playedMs();
       this.bot.flush();
       this._setSpeaking(null);
-      this._send({ type: 'speech_start' });
+      this._send({ type: 'speech_start', heard_ms: heardMs });
       this._setMicState(true);
     } else {
       this._send({ type: 'speech_end' });

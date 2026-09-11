@@ -22,6 +22,8 @@
 export class BotAudio {
   constructor(sampleRate = 24000) {
     this.srcRate = sampleRate;
+    this.turnStartAt = null;     // ctx time this turn's audio began
+    this.scheduledSec = 0;       // total audio queued for this turn
     this.ctx = new (window.AudioContext || window.webkitAudioContext)();
     this.gain = this.ctx.createGain();
     this.gain.connect(this.ctx.destination);
@@ -53,7 +55,11 @@ export class BotAudio {
     const now = this.ctx.currentTime;
     const startAt = Math.max(now + 0.04, this.nextAt);
     src.start(startAt);
+    // When this turn's audio began, and how much of it exists. Both are needed to say
+    // how much the candidate ACTUALLY heard when they cut in — see playedMs().
+    if (this.pending.size === 0) this.turnStartAt = startAt;
     this.nextAt = startAt + buf.duration;
+    this.scheduledSec += buf.duration;
 
     this.pending.add(src);
     src.onended = () => {
@@ -64,12 +70,28 @@ export class BotAudio {
   }
 
   /* Barge-in: drop everything already scheduled, immediately. */
+  /* How many ms of THIS turn the candidate actually heard.
+
+     The model's text runs ahead of its voice: Gemini has already produced the whole
+     sentence while the speaker is still a few words into it. Persisting the generated
+     text on a barge-in therefore records words nobody heard, and a later interviewer
+     follows up on them. Playback is real-time from `turnStartAt`, so elapsed context
+     time is the honest measure — capped at what was actually scheduled, because an
+     underrun means less was heard, never more. */
+  playedMs() {
+    if (this.turnStartAt == null) return 0;
+    const elapsed = this.ctx.currentTime - this.turnStartAt;
+    return Math.max(0, Math.round(Math.min(elapsed, this.scheduledSec) * 1000));
+  }
+
   flush() {
     for (const src of this.pending) {
       try { src.onended = null; src.stop(); } catch (_) { /* already ended */ }
     }
     this.pending.clear();
     this.nextAt = 0;
+    this.turnStartAt = null;
+    this.scheduledSec = 0;
     this._setSpeaking(false);
   }
 

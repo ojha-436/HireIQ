@@ -396,6 +396,12 @@ async def interview_ws(websocket: WebSocket, session_id: str, token: str = "") -
 
             mtype = msg.get("type")
             if mtype == "speech_start":
+                # How much of the interviewer's line the candidate actually heard before
+                # cutting in. Used to trim the persona turn to what was really said aloud.
+                try:
+                    runtime.heard_ms = max(0, int(msg.get("heard_ms") or 0))
+                except (TypeError, ValueError):
+                    runtime.heard_ms = 0
                 # The browser's VAD decides turn boundaries, not the model's — that is
                 # what leaves the moderator in control of who answers.
                 await runtime.on_speech_start()

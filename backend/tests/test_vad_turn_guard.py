@@ -158,3 +158,54 @@ def test_a_deliberate_press_with_a_buffered_answer_is_never_discarded():
     assert "".join(rt._cand_buf) or rt.last_candidate is not None or True, (
         "the buffered answer must reach the turn decision, not be dropped"
     )
+
+
+def _rt_with_turn(text, audio_bytes, heard_ms):
+    rt = _runtime()
+    rt._persona_buf = {"tech": [text]}
+    rt._audio_bytes = audio_bytes
+    rt.heard_ms = heard_ms
+    return rt
+
+
+def test_barge_in_records_only_what_the_candidate_heard():
+    """Gemini's text runs ahead of its voice.
+
+    Persisting the whole generated line on a barge-in put words the candidate never
+    heard into the transcript — and so into the panel's memory and the evidence behind
+    the score. A later interviewer would follow up on something that was, from the
+    candidate's side, never said.
+    """
+    line = ("Walk me through how you guaranteed exactly once settlement, "
+            "and what you gave up to get it.")
+    # 24 kHz mono PCM16 => 48 bytes per ms. Ten seconds generated, three heard.
+    rt = _rt_with_turn(line, audio_bytes=48 * 10_000, heard_ms=3_000)
+    rt._truncate_to_heard("tech")
+
+    kept = "".join(rt._persona_buf["tech"])
+    assert kept.endswith("…"), "a cut-off line should be marked as cut off"
+    assert len(kept) < len(line)
+    assert line.startswith(kept[:-1].rstrip()), "kept text must be a prefix, not a paraphrase"
+    assert not kept[:-1].endswith(" "), "must not clip mid-word"
+
+
+def test_a_line_heard_in_full_is_left_alone():
+    line = "Thanks — that is clear."
+    rt = _rt_with_turn(line, audio_bytes=48 * 2_000, heard_ms=2_000)
+    rt._truncate_to_heard("tech")
+    assert "".join(rt._persona_buf["tech"]) == line
+
+
+def test_no_measurement_means_the_turn_is_kept_whole():
+    """An older client sends no heard_ms; guessing would be worse than keeping it."""
+    line = "Tell me about the hardest part of that migration."
+    rt = _rt_with_turn(line, audio_bytes=48 * 5_000, heard_ms=0)
+    rt._truncate_to_heard("tech")
+    assert "".join(rt._persona_buf["tech"]) == line
+
+
+def test_barely_heard_line_is_dropped_rather_than_left_as_an_ellipsis():
+    line = "Could you expand on the partition-keying strategy you chose?"
+    rt = _rt_with_turn(line, audio_bytes=48 * 10_000, heard_ms=200)
+    rt._truncate_to_heard("tech")
+    assert "".join(rt._persona_buf["tech"]) == ""

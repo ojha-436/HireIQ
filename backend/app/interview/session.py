@@ -1048,6 +1048,7 @@ class InterviewRuntime:
         # now rather than after the quiet window, or a barge-in loses the partial turn.
         self._cancel_pending_flush()
         if self._persona_turn_open and self.floor.current:
+            self._truncate_to_heard(self.floor.current)
             await self._flush_persona_turn(self.floor.current)
             self._persona_turn_open = False
         await self.emit({"type": "interrupted", "reason": "candidate_speaking"})
@@ -1587,6 +1588,45 @@ class InterviewRuntime:
                          "turn": self.mod.turns_taken, "of": self.mod.max_turns})
 
     # -- transcript persistence -------------------------------------------
+
+    def _truncate_to_heard(self, persona_key: str) -> None:
+        """Cut an interrupted persona turn down to what the candidate actually heard.
+
+        The model's TEXT runs ahead of its VOICE: by the time a sentence is halfway
+        through the speaker, Gemini has already produced all of it. Persisting the whole
+        generated string on a barge-in put words into the transcript — and therefore into
+        the panel's memory and the evidence behind the score — that the candidate never
+        heard. A later interviewer would then follow up on something that, from the
+        candidate's side, was never said.
+
+        The browser reports how many milliseconds it played (`heard_ms`). Audio is
+        24 kHz mono PCM16, so the bytes emitted for this turn give the milliseconds
+        generated; the ratio between them is the fraction of the line that was audible.
+        Text is trimmed on a word boundary, never mid-word.
+        """
+        heard_ms = int(getattr(self, "heard_ms", 0) or 0)
+        chunks = self._persona_buf.get(persona_key) or []
+        text = "".join(chunks)
+        if not text:
+            return
+        generated_bytes = int(getattr(self, "_audio_bytes", 0) or 0)
+        if heard_ms <= 0 or generated_bytes <= 0:
+            return                      # no measurement to trust; keep the turn whole
+        generated_ms = generated_bytes / (LC.OUTPUT_SAMPLE_RATE * 2) * 1000
+        if generated_ms <= 0:
+            return
+        ratio = heard_ms / generated_ms
+        if ratio >= 0.97:
+            return                      # heard essentially all of it
+        keep = max(0, min(len(text), int(len(text) * ratio)))
+        clipped = text[:keep].rstrip()
+        if " " in clipped:
+            clipped = clipped[:clipped.rfind(" ")].rstrip()
+        # Below this there is no usable sentence left; an ellipsis alone is worse than
+        # recording that the line was cut off before it landed.
+        self._persona_buf[persona_key] = [clipped + "…"] if len(clipped) >= 12 else []
+        print("barge-in: trimmed {} turn to {}% ({} of {:.0f} ms heard)".format(
+            persona_key, int(ratio * 100), heard_ms, generated_ms))
 
     async def _flush_persona_turn(self, persona_key: str) -> None:
         text = clean_spoken("".join(self._persona_buf.pop(persona_key, [])))
